@@ -275,11 +275,109 @@ When agents disagree, resolution uses weighted expertise:
 
 ## CLI Commands Reference
 
-| CLI | Command | Key Flags |
-|-----|---------|-----------|
-| Cursor | `cursor-agent -p "prompt"` | `--output-format json`, `--force` |
-| Gemini | `gemini -p "prompt"` | `--output-format json` |
+| CLI | Command | Model | Key Flags |
+|-----|---------|-------|-----------|
+| Cursor | `cursor-agent -m "$MODEL" -p "prompt"` | GPT-5.2-Codex | `--output-format json`, `--force` |
+| Gemini | `gemini -m "$MODEL" -p "prompt"` | Gemini 3 Pro | `--output-format json` |
+
+## Progress Files (Agentic Memory)
+
+To maintain context across long workflows and sessions, agents use progress files:
+
+### Progress File Locations
+
+| File | Purpose | When Updated |
+|------|---------|--------------|
+| `.workflow/progress/current-task.md` | Active task being worked on | Continuously |
+| `.workflow/progress/decisions.md` | Key decisions made and rationale | After major decisions |
+| `.workflow/progress/blockers.md` | Issues blocking progress | When blockers arise |
+| `.workflow/progress/handoff-notes.md` | Context for session resumption | Before session end |
+
+### Progress File Format
+
+```markdown
+# Progress: [Task Name]
+## Last Updated: [ISO8601 timestamp]
+
+## Current Status
+- Phase: [1-5]
+- Step: [Current step description]
+- Completion: [X%]
+
+## Recent Actions
+1. [Most recent action]
+2. [Previous action]
+
+## Pending Items
+- [ ] [Next step]
+- [ ] [Following step]
+
+## Key Decisions
+- **[Decision]**: [Rationale]
+
+## Notes for Resumption
+[Context needed to continue work]
+```
+
+### Using Progress Files
+
+**Starting a session**:
+1. Read `.workflow/progress/handoff-notes.md` (if exists)
+2. Read `.workflow/state.json` for workflow state
+3. Resume from recorded position
+
+**During work**:
+1. Update `current-task.md` at each significant step
+2. Record decisions in `decisions.md`
+3. Document blockers immediately
+
+**Ending a session**:
+1. Write comprehensive `handoff-notes.md`
+2. Update `state.json` with latest state
+3. Ensure all progress files are current
+
+## Context Checkpointing
+
+### Checkpoint Triggers
+
+| Trigger | Action |
+|---------|--------|
+| Phase transition | Full state checkpoint |
+| Agent feedback received | Feedback checkpoint |
+| Implementation milestone | Code checkpoint |
+| Error/blocker | Error checkpoint |
+
+### Checkpoint Format
+
+```json
+{
+  "checkpoint_id": "uuid",
+  "timestamp": "ISO8601",
+  "phase": 3,
+  "trigger": "milestone",
+  "state_hash": "sha256",
+  "files_changed": ["path/to/file.py"],
+  "resumable": true
+}
+```
+
+## Model Versions (As of January 2026)
+
+| Agent | Default Model | Alternatives | Context Window |
+|-------|--------------|--------------|----------------|
+| Cursor | GPT-5.2-Codex | gpt-5.1-codex, gpt-4.5-turbo | 256K tokens |
+| Gemini | Gemini 3 Pro | gemini-3-flash, gemini-2.5-pro | 1M+ tokens |
+| Claude | Claude Opus 4.5 | claude-sonnet-4 | 200K tokens |
+
+### Model Override
+
+```bash
+# Environment variables
+export CURSOR_MODEL=gpt-5.1-codex
+export GEMINI_MODEL=gemini-3-flash
+```
 
 ---
 
 *This document is read by all agents to ensure consistent workflow execution.*
+*Context Version: 2.0 | Models: GPT-5.2-Codex, Gemini 3 Pro*

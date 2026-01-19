@@ -2,14 +2,64 @@
 
 Provides checksums and drift detection for context files to ensure
 consistency across workflow phases.
+
+Includes progress files support for agentic memory across sessions.
 """
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from enum import Enum
+
+
+class CheckpointTrigger(Enum):
+    """Triggers for creating checkpoints."""
+    PHASE_TRANSITION = "phase_transition"
+    FEEDBACK_RECEIVED = "feedback_received"
+    IMPLEMENTATION_MILESTONE = "implementation_milestone"
+    ERROR_BLOCKER = "error_blocker"
+    MANUAL = "manual"
+
+
+@dataclass
+class ProgressEntry:
+    """A single progress entry for agentic memory."""
+    timestamp: str
+    action: str
+    details: str
+    phase: Optional[int] = None
+    completion_pct: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ProgressEntry":
+        return cls(**data)
+
+
+@dataclass
+class Checkpoint:
+    """Checkpoint for resumable workflows."""
+    checkpoint_id: str
+    timestamp: str
+    phase: int
+    trigger: str
+    state_hash: str
+    files_changed: list[str] = field(default_factory=list)
+    resumable: bool = True
+    notes: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Checkpoint":
+        return cls(**data)
 
 
 @dataclass
@@ -78,6 +128,8 @@ class ContextManager:
 
     Tracks important context files (AGENTS.md, PRODUCT.md, etc.) and
     detects when they change during a workflow execution.
+
+    Also manages progress files for agentic memory across sessions.
     """
 
     # Files tracked by default
@@ -88,6 +140,17 @@ class ContextManager:
         "gemini": "GEMINI.md",
         "claude": "CLAUDE.md",
     }
+
+    # Progress files for agentic memory
+    PROGRESS_FILES = {
+        "current_task": ".workflow/progress/current-task.md",
+        "decisions": ".workflow/progress/decisions.md",
+        "blockers": ".workflow/progress/blockers.md",
+        "handoff_notes": ".workflow/progress/handoff-notes.md",
+    }
+
+    # Checkpoint directory
+    CHECKPOINT_DIR = ".workflow/checkpoints"
 
     def __init__(self, project_dir: str | Path):
         """Initialize context manager.
@@ -289,3 +352,306 @@ class ContextManager:
             data = json.load(f)
 
         return ContextState.from_dict(data)
+
+    # ========== Progress Files Support ==========
+
+    def _get_progress_path(self, key: str) -> Path:
+        """Get path to a progress file.
+
+        Args:
+            key: Key from PROGRESS_FILES
+
+        Returns:
+            Absolute path to the progress file
+        """
+        return self.project_dir / self.PROGRESS_FILES[key]
+
+    def init_progress_directory(self) -> None:
+        """Initialize the progress directory structure."""
+        progress_dir = self.project_dir / ".workflow/progress"
+        progress_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_dir = self.project_dir / self.CHECKPOINT_DIR
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    def update_current_task(
+        self,
+        task_name: str,
+        phase: int,
+        step: str,
+        completion_pct: int,
+        recent_actions: list[str],
+        pending_items: list[str],
+        notes: str = "",
+    ) -> None:
+        """Update the current task progress file.
+
+        Args:
+            task_name: Name of the current task
+            phase: Current workflow phase (1-5)
+            step: Current step description
+            completion_pct: Completion percentage (0-100)
+            recent_actions: List of recent actions taken
+            pending_items: List of pending items
+            notes: Optional notes for resumption
+        """
+        self.init_progress_directory()
+        path = self._get_progress_path("current_task")
+
+        content = f"""# Progress: {task_name}
+## Last Updated: {datetime.now().isoformat()}
+
+## Current Status
+- Phase: {phase}
+- Step: {step}
+- Completion: {completion_pct}%
+
+## Recent Actions
+{chr(10).join(f'{i+1}. {action}' for i, action in enumerate(recent_actions[-5:]))}
+
+## Pending Items
+{chr(10).join(f'- [ ] {item}' for item in pending_items)}
+
+## Notes for Resumption
+{notes if notes else 'No additional notes.'}
+"""
+        path.write_text(content)
+
+    def record_decision(self, decision: str, rationale: str) -> None:
+        """Record a key decision to the decisions file.
+
+        Args:
+            decision: The decision made
+            rationale: Reasoning behind the decision
+        """
+        self.init_progress_directory()
+        path = self._get_progress_path("decisions")
+
+        entry = f"""
+## {datetime.now().isoformat()}
+**Decision**: {decision}
+**Rationale**: {rationale}
+
+---
+"""
+        # Append to existing file
+        existing = path.read_text() if path.exists() else "# Key Decisions\n"
+        path.write_text(existing + entry)
+
+    def record_blocker(
+        self,
+        description: str,
+        severity: str,
+        potential_solutions: list[str],
+    ) -> None:
+        """Record a blocker to the blockers file.
+
+        Args:
+            description: Description of the blocker
+            severity: high, medium, or low
+            potential_solutions: List of potential solutions
+        """
+        self.init_progress_directory()
+        path = self._get_progress_path("blockers")
+
+        entry = f"""
+## Blocker: {datetime.now().isoformat()}
+**Severity**: {severity}
+**Description**: {description}
+
+**Potential Solutions**:
+{chr(10).join(f'- {sol}' for sol in potential_solutions)}
+
+**Status**: OPEN
+
+---
+"""
+        existing = path.read_text() if path.exists() else "# Blockers Log\n"
+        path.write_text(existing + entry)
+
+    def write_handoff_notes(
+        self,
+        current_phase: int,
+        completed_work: list[str],
+        in_progress_work: list[str],
+        next_steps: list[str],
+        important_context: str,
+        warnings: list[str] = None,
+    ) -> None:
+        """Write comprehensive handoff notes for session resumption.
+
+        Args:
+            current_phase: Current workflow phase
+            completed_work: List of completed work items
+            in_progress_work: List of work items in progress
+            next_steps: List of recommended next steps
+            important_context: Important context to remember
+            warnings: Optional list of warnings/gotchas
+        """
+        self.init_progress_directory()
+        path = self._get_progress_path("handoff_notes")
+
+        content = f"""# Session Handoff Notes
+## Generated: {datetime.now().isoformat()}
+
+## Workflow State
+- **Current Phase**: {current_phase}
+- **Status**: In Progress
+
+## Completed Work
+{chr(10).join(f'- [x] {item}' for item in completed_work)}
+
+## In Progress
+{chr(10).join(f'- [ ] {item}' for item in in_progress_work)}
+
+## Recommended Next Steps
+{chr(10).join(f'{i+1}. {step}' for i, step in enumerate(next_steps))}
+
+## Important Context
+{important_context}
+
+"""
+        if warnings:
+            content += f"""## Warnings
+{chr(10).join(f'⚠️ {w}' for w in warnings)}
+
+"""
+        content += """## Files to Read First
+1. `.workflow/state.json` - Current workflow state
+2. `.workflow/progress/current-task.md` - Current task details
+3. `.workflow/progress/decisions.md` - Key decisions made
+4. `PRODUCT.md` - Feature specification
+"""
+        path.write_text(content)
+
+    def read_handoff_notes(self) -> Optional[str]:
+        """Read handoff notes from previous session.
+
+        Returns:
+            Handoff notes content if exists, None otherwise
+        """
+        path = self._get_progress_path("handoff_notes")
+        if path.exists():
+            return path.read_text()
+        return None
+
+    # ========== Checkpoint Support ==========
+
+    def create_checkpoint(
+        self,
+        phase: int,
+        trigger: CheckpointTrigger,
+        files_changed: list[str] = None,
+        notes: str = "",
+    ) -> Checkpoint:
+        """Create a checkpoint for workflow resumption.
+
+        Args:
+            phase: Current workflow phase
+            trigger: What triggered this checkpoint
+            files_changed: List of files changed since last checkpoint
+            notes: Optional notes about the checkpoint
+
+        Returns:
+            Created Checkpoint object
+        """
+        self.init_progress_directory()
+
+        # Compute state hash from current context
+        state = self.capture_context()
+        state_hash = hashlib.sha256(
+            json.dumps(state.to_dict(), sort_keys=True).encode()
+        ).hexdigest()
+
+        checkpoint = Checkpoint(
+            checkpoint_id=str(uuid.uuid4()),
+            timestamp=datetime.now().isoformat(),
+            phase=phase,
+            trigger=trigger.value,
+            state_hash=state_hash,
+            files_changed=files_changed or [],
+            resumable=True,
+            notes=notes,
+        )
+
+        # Save checkpoint
+        checkpoint_dir = self.project_dir / self.CHECKPOINT_DIR
+        checkpoint_path = checkpoint_dir / f"checkpoint-{checkpoint.checkpoint_id}.json"
+
+        with open(checkpoint_path, "w") as f:
+            json.dump(checkpoint.to_dict(), f, indent=2)
+
+        # Also update latest checkpoint pointer
+        latest_path = checkpoint_dir / "latest.json"
+        with open(latest_path, "w") as f:
+            json.dump(checkpoint.to_dict(), f, indent=2)
+
+        return checkpoint
+
+    def get_latest_checkpoint(self) -> Optional[Checkpoint]:
+        """Get the most recent checkpoint.
+
+        Returns:
+            Latest Checkpoint if exists, None otherwise
+        """
+        latest_path = self.project_dir / self.CHECKPOINT_DIR / "latest.json"
+        if not latest_path.exists():
+            return None
+
+        with open(latest_path, "r") as f:
+            data = json.load(f)
+        return Checkpoint.from_dict(data)
+
+    def list_checkpoints(self) -> list[Checkpoint]:
+        """List all checkpoints in chronological order.
+
+        Returns:
+            List of Checkpoint objects
+        """
+        checkpoint_dir = self.project_dir / self.CHECKPOINT_DIR
+        if not checkpoint_dir.exists():
+            return []
+
+        checkpoints = []
+        for path in checkpoint_dir.glob("checkpoint-*.json"):
+            with open(path, "r") as f:
+                data = json.load(f)
+            checkpoints.append(Checkpoint.from_dict(data))
+
+        return sorted(checkpoints, key=lambda c: c.timestamp)
+
+    def get_resumption_context(self) -> dict:
+        """Get all context needed to resume a workflow.
+
+        Returns:
+            Dictionary with handoff notes, latest checkpoint,
+            current task, and recent decisions
+        """
+        result = {
+            "handoff_notes": self.read_handoff_notes(),
+            "latest_checkpoint": None,
+            "current_task": None,
+            "has_progress_files": False,
+        }
+
+        # Latest checkpoint
+        checkpoint = self.get_latest_checkpoint()
+        if checkpoint:
+            result["latest_checkpoint"] = checkpoint.to_dict()
+
+        # Current task
+        task_path = self._get_progress_path("current_task")
+        if task_path.exists():
+            result["current_task"] = task_path.read_text()
+            result["has_progress_files"] = True
+
+        # Decisions
+        decisions_path = self._get_progress_path("decisions")
+        if decisions_path.exists():
+            result["recent_decisions"] = decisions_path.read_text()
+
+        # Blockers
+        blockers_path = self._get_progress_path("blockers")
+        if blockers_path.exists():
+            result["blockers"] = blockers_path.read_text()
+
+        return result

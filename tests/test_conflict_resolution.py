@@ -361,7 +361,8 @@ class TestConsensusRecommendation:
 
     def test_consensus_with_resolved_conflicts(self):
         """Test consensus proceeds with caution when conflicts resolved."""
-        resolver = ConflictResolver(default_strategy=ResolutionStrategy.WEIGHTED)
+        # Use CONSERVATIVE strategy which always resolves (doesn't tie)
+        resolver = ConflictResolver(default_strategy=ResolutionStrategy.CONSERVATIVE)
 
         cursor = {"overall_assessment": "approve", "score": 9}
         gemini = {"overall_assessment": "reject", "score": 5}

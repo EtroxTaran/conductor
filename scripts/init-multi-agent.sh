@@ -61,11 +61,16 @@ mkdir -p "$PROJECT_DIR/.workflow/phases/validation"
 mkdir -p "$PROJECT_DIR/.workflow/phases/implementation"
 mkdir -p "$PROJECT_DIR/.workflow/phases/verification"
 mkdir -p "$PROJECT_DIR/.workflow/phases/completion"
-mkdir -p "$PROJECT_DIR/.claude"
+mkdir -p "$PROJECT_DIR/.workflow/progress"
+mkdir -p "$PROJECT_DIR/.workflow/checkpoints"
+mkdir -p "$PROJECT_DIR/.claude/commands"
+mkdir -p "$PROJECT_DIR/.claude/skills"
 mkdir -p "$PROJECT_DIR/.cursor"
 mkdir -p "$PROJECT_DIR/scripts"
 
 echo -e "  ${GREEN}✓${NC} Created .workflow directory structure"
+echo -e "  ${GREEN}✓${NC} Created .workflow/progress for agentic memory"
+echo -e "  ${GREEN}✓${NC} Created .workflow/checkpoints for resumption"
 
 # Copy templates
 echo -e "${YELLOW}Setting up templates...${NC}"
@@ -113,6 +118,7 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
 
 <!-- Source of truth: AGENTS.md -->
 <!-- This file contains Claude-specific extensions only -->
+<!-- Models: GPT-5.2-Codex (Cursor), Gemini 3 Pro (Gemini) -->
 
 This project uses a **multi-agent orchestration system**. For complete workflow rules, read `AGENTS.md`.
 
@@ -123,6 +129,7 @@ This project uses a **multi-agent orchestration system**. For complete workflow 
 | `AGENTS.md` | Complete workflow rules (READ THIS FIRST) |
 | `PRODUCT.md` | Feature specification |
 | `.workflow/state.json` | Workflow state and progress |
+| `.workflow/progress/` | Agentic memory / progress files |
 
 ## Your Role
 
@@ -136,18 +143,34 @@ You are the **lead orchestrator**. Coordinate the workflow by:
 ## Agent Invocation
 
 ```bash
-# Cursor (code quality, security)
+# Cursor (code quality, security) - GPT-5.2-Codex
 bash scripts/call-cursor.sh <prompt-file> <output-file>
 
-# Gemini (architecture, scalability)
+# Gemini (architecture, scalability) - Gemini 3 Pro
 bash scripts/call-gemini.sh <prompt-file> <output-file>
 ```
+
+## Model Override
+
+```bash
+# Override default models via environment variables
+export CURSOR_MODEL=gpt-5.1-codex     # Options: gpt-5.2-codex, gpt-5.1-codex, gpt-4.5-turbo
+export GEMINI_MODEL=gemini-3-flash    # Options: gemini-3-pro, gemini-3-flash, gemini-2.5-pro
+```
+
+## Session Resumption
+
+When resuming a workflow:
+1. Read `.workflow/progress/handoff-notes.md` first
+2. Check `.workflow/state.json` for current phase
+3. Read `.workflow/progress/current-task.md` for active work
 
 ## Claude-Specific Notes
 
 - Always read AGENTS.md for the full protocol
 - Context files are version-tracked for drift detection
 - Approval requires consensus (see AGENTS.md for policies)
+- Use progress files to maintain context across sessions
 EOF
     echo -e "  ${GREEN}✓${NC} Created CLAUDE.md"
 fi
@@ -192,10 +215,53 @@ if [ ! -f "$PROJECT_DIR/.workflow/state.json" ]; then
     "cursor": "pending",
     "gemini": "pending"
   },
-  "feature": null
+  "feature": null,
+  "context": {
+    "files": {},
+    "captured_at": null,
+    "version": "2.0"
+  },
+  "models": {
+    "cursor": "gpt-5.2-codex",
+    "gemini": "gemini-3-pro"
+  }
 }
 EOF
     echo -e "  ${GREEN}✓${NC} Created .workflow/state.json"
+fi
+
+# Initialize progress files
+echo -e "${YELLOW}Initializing progress files...${NC}"
+
+if [ ! -f "$PROJECT_DIR/.workflow/progress/handoff-notes.md" ]; then
+    cat > "$PROJECT_DIR/.workflow/progress/handoff-notes.md" << 'EOF'
+# Session Handoff Notes
+## Generated: Initial Setup
+
+## Workflow State
+- **Current Phase**: 1 (Planning)
+- **Status**: Not Started
+
+## Completed Work
+- [x] Project initialized with multi-agent orchestration
+
+## In Progress
+- [ ] Awaiting feature specification in PRODUCT.md
+
+## Recommended Next Steps
+1. Edit PRODUCT.md with your feature specification
+2. Start Claude Code and request implementation
+3. Follow the 5-phase workflow
+
+## Important Context
+This is a fresh project setup. No workflow has been started yet.
+
+## Files to Read First
+1. `PRODUCT.md` - Feature specification (needs editing)
+2. `AGENTS.md` - Complete workflow rules
+3. `.workflow/state.json` - Workflow state
+EOF
+    echo -e "  ${GREEN}✓${NC} Created initial handoff-notes.md"
 fi
 
 # Add .gitignore entries
@@ -231,12 +297,18 @@ echo -e "  ├── CLAUDE.md           ${YELLOW}← Claude context${NC}"
 echo -e "  ├── GEMINI.md           ${YELLOW}← Gemini context${NC}"
 echo -e "  ├── .cursor/rules       ${YELLOW}← Cursor rules${NC}"
 echo -e "  ├── scripts/"
-echo -e "  │   ├── call-cursor.sh  ${YELLOW}← Invoke Cursor CLI${NC}"
-echo -e "  │   ├── call-gemini.sh  ${YELLOW}← Invoke Gemini CLI${NC}"
+echo -e "  │   ├── call-cursor.sh  ${YELLOW}← Invoke Cursor CLI (GPT-5.2-Codex)${NC}"
+echo -e "  │   ├── call-gemini.sh  ${YELLOW}← Invoke Gemini CLI (Gemini 3 Pro)${NC}"
 echo -e "  │   └── prompts/        ${YELLOW}← Prompt templates${NC}"
 echo -e "  └── .workflow/"
 echo -e "      ├── state.json      ${YELLOW}← Workflow state${NC}"
+echo -e "      ├── progress/       ${YELLOW}← Agentic memory / handoff notes${NC}"
+echo -e "      ├── checkpoints/    ${YELLOW}← Resumable checkpoints${NC}"
 echo -e "      └── phases/         ${YELLOW}← Phase artifacts${NC}"
+echo ""
+echo -e "${YELLOW}Default Models (January 2026):${NC}"
+echo -e "  • Cursor: ${BLUE}GPT-5.2-Codex${NC} (256K context)"
+echo -e "  • Gemini: ${BLUE}Gemini 3 Pro${NC} (1M+ context)"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo ""
@@ -253,4 +325,8 @@ echo -e "${YELLOW}How it works:${NC}"
 echo -e "  Claude Code reads PRODUCT.md, creates a plan, calls Cursor and"
 echo -e "  Gemini for validation via the bash scripts, implements the code,"
 echo -e "  and iterates based on their feedback until all agents approve."
+echo ""
+echo -e "${YELLOW}Session Resumption:${NC}"
+echo -e "  Progress is automatically saved to .workflow/progress/"
+echo -e "  Read handoff-notes.md when resuming a session."
 echo ""
