@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Workflow State",
+  "description": "Schema for the workflow state persisted in state.json",
+  "type": "object",
+  "required": ["project_name", "current_phase", "phases"],
+  "properties": {
+    "project_name": {
+      "type": "string",
+      "description": "Name of the project"
+    },
+    "current_phase": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Current phase number (1-5)"
+    },
+    "iteration_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of workflow iterations (plan-validate cycles)"
+    },
+    "phases": {
+      "type": "object",
+      "description": "State of each phase",
+      "properties": {
+        "planning": { "$ref": "#/definitions/phaseState" },
+        "validation": { "$ref": "#/definitions/phaseState" },
+        "implementation": { "$ref": "#/definitions/phaseState" },
+        "verification": { "$ref": "#/definitions/phaseState" },
+        "completion": { "$ref": "#/definitions/phaseState" }
+      }
+    },
+    "context": {
+      "$ref": "#/definitions/contextState",
+      "description": "Tracked context file checksums for drift detection"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Workflow creation timestamp"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp"
+    },
+    "git_commits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phase": { "type": "integer" },
+          "hash": { "type": "string" },
+          "message": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Additional metadata"
+    }
+  },
+  "definitions": {
+    "phaseState": {
+      "type": "object",
+      "required": ["name", "status"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "failed", "blocked"]
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "blockers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "approvals": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "error": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "contextState": {
+      "type": "object",
+      "description": "State of tracked context files for drift detection",
+      "properties": {
+        "files": {
+          "type": "object",
+          "description": "Map of file key to checksum info",
+          "additionalProperties": {
+            "$ref": "#/definitions/fileChecksum"
+          }
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the context was captured"
+        },
+        "version": {
+          "type": "string",
+          "description": "Context state version"
+        }
+      }
+    },
+    "fileChecksum": {
+      "type": "object",
+      "required": ["path", "checksum"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path to the file"
+        },
+        "checksum": {
+          "type": "string",
+          "description": "SHA-256 checksum of file contents"
+        },
+        "last_modified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification timestamp"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "File size in bytes"
+        }
+      }
+    }
+  }
+}

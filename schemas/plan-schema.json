@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Implementation Plan",
+  "description": "Schema for the implementation plan created in Phase 1",
+  "type": "object",
+  "required": ["plan_name", "summary", "phases"],
+  "properties": {
+    "plan_name": {
+      "type": "string",
+      "description": "Name of the feature or project"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Brief summary of what will be built"
+    },
+    "phases": {
+      "type": "array",
+      "description": "Implementation phases with tasks",
+      "items": {
+        "type": "object",
+        "required": ["phase", "name", "tasks"],
+        "properties": {
+          "phase": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Phase number"
+          },
+          "name": {
+            "type": "string",
+            "description": "Phase name"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "description"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^T\\d+$",
+                  "description": "Task ID (e.g., T1, T2)"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Task description"
+                },
+                "files": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Files to create or modify"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Task IDs this depends on"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "test_strategy": {
+      "type": "object",
+      "properties": {
+        "unit_tests": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of unit test files"
+        },
+        "integration_tests": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of integration tests"
+        },
+        "test_commands": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Commands to run tests"
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Potential risks"
+    },
+    "estimated_complexity": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "Estimated implementation complexity"
+    }
+  }
+}

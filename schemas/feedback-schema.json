@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Validation Feedback",
+  "description": "Schema for feedback from validation and verification phases",
+  "type": "object",
+  "required": ["reviewer", "overall_assessment"],
+  "properties": {
+    "reviewer": {
+      "type": "string",
+      "enum": ["cursor", "gemini"],
+      "description": "The reviewing agent"
+    },
+    "overall_assessment": {
+      "type": "string",
+      "enum": ["approve", "needs_changes", "reject", "unknown"],
+      "description": "Overall assessment result"
+    },
+    "approved": {
+      "type": "boolean",
+      "description": "Whether the review approves (for verification phase)"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Overall score out of 10"
+    },
+    "review_type": {
+      "type": "string",
+      "enum": ["plan_validation", "code_review", "architecture_review"],
+      "description": "Type of review"
+    },
+    "strengths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Identified strengths"
+    },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "area": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Issues that must be fixed"
+    },
+    "files_reviewed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["approved", "needs_changes"]
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": { "type": "integer" },
+                "severity": {
+                  "type": "string",
+                  "enum": ["error", "warning", "info"]
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["bug", "security", "style", "performance"]
+                },
+                "description": { "type": "string" },
+                "suggestion": { "type": "string" }
+              }
+            }
+          },
+          "positive_feedback": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "architecture_review": {
+      "type": "object",
+      "properties": {
+        "patterns_identified": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scalability_assessment": {
+          "type": "string",
+          "enum": ["good", "adequate", "poor"]
+        },
+        "maintainability_assessment": {
+          "type": "string",
+          "enum": ["good", "adequate", "poor"]
+        },
+        "concerns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "area": { "type": "string" },
+              "description": { "type": "string" },
+              "recommendation": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "security_review": {
+      "type": "object",
+      "properties": {
+        "issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Brief summary of the review"
+    }
+  }
+}
