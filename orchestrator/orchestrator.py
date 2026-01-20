@@ -8,6 +8,7 @@ from typing import Optional
 
 from .utils.state import StateManager, PhaseStatus
 from .utils.logging import OrchestrationLogger, LogLevel
+from .utils.git_operations import GitOperationsManager
 from .phases import (
     PlanningPhase,
     ValidationPhase,
@@ -73,6 +74,9 @@ class Orchestrator:
             console_output=console_output,
             min_level=log_level,
         )
+
+        # Initialize git operations manager for efficient batched git operations
+        self.git = GitOperationsManager(self.project_dir)
 
     def check_prerequisites(self) -> tuple[bool, list[str]]:
         """Check that all prerequisites are met.
@@ -243,68 +247,29 @@ class Orchestrator:
     def _auto_commit(self, phase_num: int, phase_name: str) -> None:
         """Auto-commit changes after a phase.
 
+        Uses GitOperationsManager for efficient batched git operations,
+        reducing subprocess overhead from 5 calls to 1.
+
         Args:
             phase_num: Phase number
             phase_name: Phase name for commit message
         """
         try:
-            # Check if git repo
-            result = subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                cwd=self.project_dir,
-                capture_output=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
+            if not self.git.is_git_repo():
                 self.logger.debug("Not a git repository, skipping auto-commit")
                 return
 
-            # Check for changes
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=self.project_dir,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if not result.stdout.strip():
-                self.logger.debug("No changes to commit")
-                return
-
-            # Stage changes
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=self.project_dir,
-                capture_output=True,
-                timeout=30,
-            )
-
-            # Create commit
             commit_message = f"[orchestrator] Phase {phase_num}: {phase_name} complete"
-            result = subprocess.run(
-                ["git", "commit", "-m", commit_message],
-                cwd=self.project_dir,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
 
-            if result.returncode == 0:
-                # Get commit hash
-                hash_result = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=self.project_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                commit_hash = hash_result.stdout.strip()[:8]
+            # Single batched operation: status check + add + commit + hash
+            commit_hash = self.git.auto_commit(commit_message)
 
+            if commit_hash:
                 self.state.record_commit(phase_num, commit_hash, commit_message)
                 self.logger.commit(phase_num, commit_hash, commit_message)
+            else:
+                self.logger.debug("No changes to commit")
 
-        except subprocess.TimeoutExpired:
-            self.logger.warning("Git commit timed out", phase=phase_num)
         except Exception as e:
             self.logger.warning(f"Auto-commit failed: {e}", phase=phase_num)
 
@@ -395,38 +360,25 @@ class Orchestrator:
                 "error": f"No commit found before phase {phase_num}"
             }
 
-        # Git reset to that commit
+        # Git reset to that commit using GitOperationsManager
         try:
-            result = subprocess.run(
-                ["git", "reset", "--hard", target_commit],
-                cwd=self.project_dir,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            if self.git.reset_hard(target_commit):
+                # Update state
+                self.state.reset_to_phase(phase_num)
 
-            # Update state
-            self.state.reset_to_phase(phase_num)
+                self.logger.info(f"Rolled back to commit {target_commit[:8]} (before phase {phase_num})")
 
-            self.logger.info(f"Rolled back to commit {target_commit[:8]} (before phase {phase_num})")
-
-            return {
-                "success": True,
-                "rolled_back_to": target_commit,
-                "current_phase": phase_num - 1 if phase_num > 1 else 1,
-                "message": f"Successfully rolled back to state before phase {phase_num}"
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                "success": False,
-                "error": f"Git reset failed: {e.stderr or str(e)}"
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "error": "Git reset timed out"
-            }
+                return {
+                    "success": True,
+                    "rolled_back_to": target_commit,
+                    "current_phase": phase_num - 1 if phase_num > 1 else 1,
+                    "message": f"Successfully rolled back to state before phase {phase_num}"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Git reset failed"
+                }
         except Exception as e:
             return {
                 "success": False,

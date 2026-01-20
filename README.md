@@ -1,141 +1,271 @@
-# Multi-Agent Development System
+# Meta-Architect: Multi-Agent Development System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-A **live multi-agent orchestration system** where Claude Code acts as the lead orchestrator, coordinating with Cursor and Gemini agents via CLI to implement features through a structured 5-phase workflow.
+A **production-ready multi-agent orchestration system** that coordinates Claude Code, Cursor CLI, and Gemini CLI through a structured 5-phase workflow to implement features with built-in quality assurance.
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
+- [How It Works](#how-it-works)
+- [The 5-Phase Workflow](#the-5-phase-workflow)
+- [Agent Specializations](#agent-specializations)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Workflow Phases](#workflow-phases)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
-- [Orchestrator Library](#orchestrator-library)
-- [CLI Usage](#cli-usage)
-- [Testing](#testing)
+- [Approval & Conflict Resolution](#approval--conflict-resolution)
+- [CLI Reference](#cli-reference)
+- [Python API](#python-api)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
 - [License](#license)
 
-## Overview
+---
 
-This system implements a robust multi-agent development workflow that leverages the strengths of different AI coding assistants:
+## How It Works
 
-| Agent | Role | Specialization |
-|-------|------|----------------|
-| **Claude Code** | Lead Orchestrator | Planning, implementation, coordination |
-| **Cursor Agent** | Code Reviewer | Security, code quality, bug detection |
-| **Gemini Agent** | Architecture Reviewer | Scalability, design patterns, system health |
+Meta-Architect solves the coordination problem for AI-assisted development by orchestrating three specialized agents through a proven workflow:
 
-### Key Principles
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        User Request                                      │
+│            "Implement JWT authentication from PRODUCT.md"                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CLAUDE CODE (Lead Orchestrator)                       │
+│                                                                          │
+│  Phase 1: Planning ──────────────────────────────────────────────────►  │
+│            │                                                             │
+│            ▼                                                             │
+│  Phase 2: Validation ────────────────────────────────────────────────►  │
+│            │                     ┌─────────────┐   ┌─────────────┐      │
+│            │   parallel call ───►│   CURSOR    │   │   GEMINI    │      │
+│            │                     │ Code Review │   │ Arch Review │      │
+│            │                     └─────────────┘   └─────────────┘      │
+│            ▼                            │                │               │
+│         Feedback ◄──────────────────────┴────────────────┘               │
+│            │                                                             │
+│            ▼ (iterate if needed)                                         │
+│  Phase 3: Implementation (TDD) ──────────────────────────────────────►  │
+│            │                                                             │
+│            ▼                                                             │
+│  Phase 4: Verification ──────────────────────────────────────────────►  │
+│            │                     ┌─────────────┐   ┌─────────────┐      │
+│            │   parallel call ───►│   CURSOR    │   │   GEMINI    │      │
+│            │                     │ Final Check │   │ Final Check │      │
+│            │                     └─────────────┘   └─────────────┘      │
+│            ▼                                                             │
+│  Phase 5: Completion ────────────────────────────────────────────────►  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+                        Feature Implemented + Documented
+```
 
-- **Live orchestration**: Claude Code coordinates in real-time, not a standalone script
-- **Agent specialization**: Each agent handles tasks matching their strengths
-- **Parallel reviews**: Validation and verification run Cursor + Gemini in parallel
-- **Iterative workflow**: Feedback loops ensure quality before proceeding
-- **TDD approach**: Tests first, then implementation
-- **Context versioning**: Track changes to context files with drift detection
-
-## Features
-
-### Core Capabilities
-
-- **5-Phase Workflow**: Planning → Validation → Implementation → Verification → Completion
-- **Parallel Execution**: Cursor and Gemini run validation/verification concurrently
-- **TDD Emphasis**: Tests are written before implementation in Phase 3
-- **State Persistence**: Full workflow state with resumability
-- **Auto-commit**: Optional git commits after each phase
-
-### Advanced Features (v1.1)
+### Key Innovations
 
 | Feature | Description |
 |---------|-------------|
-| **Context Versioning** | SHA-256 checksums for detecting changes to context files |
-| **Approval Policies** | Configurable policies (NO_BLOCKERS, ALL_MUST_APPROVE, WEIGHTED_SCORE, MAJORITY) |
-| **Conflict Resolution** | Weighted expertise-based resolution when agents disagree |
-| **Iteration Tracking** | Track plan-validate-implement cycles |
-| **Drift Detection** | Automatic warning when context files change mid-workflow |
+| **Live Orchestration** | Claude Code coordinates in real-time within your project |
+| **Parallel Reviews** | Cursor and Gemini run simultaneously for faster feedback |
+| **Shared Context** | All agents read the same project files and state |
+| **Iterative Refinement** | Automatic feedback loops until quality thresholds are met |
+| **TDD Enforcement** | Tests written before implementation in Phase 3 |
+| **Git Integration** | Auto-commits after each phase with rollback capability |
+| **State Persistence** | Resume interrupted workflows from any phase |
 
-## Architecture
+---
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Claude Code (Orchestrator)                   │
-│  - Reads PRODUCT.md for requirements                            │
-│  - Creates implementation plans                                 │
-│  - Calls Cursor/Gemini for validation                           │
-│  - Implements code using TDD                                    │
-│  - Iterates based on feedback                                   │
-└─────────────────────────────────────────────────────────────────┘
-           │                                    │
-           ▼                                    ▼
-┌─────────────────────┐              ┌─────────────────────┐
-│   Cursor Agent      │              │   Gemini Agent      │
-│   (Code Review)     │              │   (Arch Review)     │
-│                     │              │                     │
-│ - Security analysis │              │ - Design patterns   │
-│ - Bug detection     │              │ - Scalability       │
-│ - Test coverage     │              │ - System health     │
-└─────────────────────┘              └─────────────────────┘
+## The 5-Phase Workflow
+
+### Phase 1: Planning (Claude)
+
+Claude reads your feature specification and creates a detailed implementation plan.
+
+**Input:** `PRODUCT.md` (your feature specification)
+
+**Output:**
+- `plan.json` - Structured plan with components, dependencies, test strategy
+- `PLAN.md` - Human-readable plan document
+
+**Example plan.json structure:**
+```json
+{
+  "plan_name": "JWT Authentication Service",
+  "summary": "Implement secure JWT-based authentication",
+  "phases": [
+    {
+      "name": "Core Auth Module",
+      "tasks": ["Create user model", "Implement password hashing", "Generate JWT tokens"],
+      "dependencies": ["bcrypt", "jsonwebtoken"]
+    }
+  ],
+  "test_strategy": {
+    "approach": "TDD",
+    "test_commands": ["pytest tests/ -v"]
+  }
+}
 ```
 
-### Data Flow
+---
 
-```
-Phase 1 → plan.json
-  ↓
-Phase 2 → cursor-feedback.json + gemini-feedback.json → consolidated-feedback.json
-  ↓
-Phase 3 → implementation-results.json + test-results.json
-  ↓
-Phase 4 → cursor-review.json + gemini-review.json → verification-results.json
-  ↓
-Phase 5 → completion-summary.json + WORKFLOW-SUMMARY.md
-```
+### Phase 2: Validation (Cursor + Gemini, Parallel)
+
+Both agents review the plan simultaneously, each focusing on their specialization.
+
+**Cursor Reviews:**
+- Security vulnerabilities
+- Code quality concerns
+- Test coverage gaps
+- Maintainability issues
+
+**Gemini Reviews:**
+- Architecture patterns
+- Scalability considerations
+- Design trade-offs
+- System health impact
+
+**Output:**
+- `cursor-feedback.json` - Cursor's review with score and concerns
+- `gemini-feedback.json` - Gemini's review with score and concerns
+- `consolidated-feedback.json` - Merged feedback
+- `approval-result.json` - Approval decision
+
+**Approval Policy:** `NO_BLOCKERS`
+- No high-severity blocking issues
+- Combined score >= 6.0/10
+
+**If not approved:** Claude revises the plan and re-submits (max 3 iterations)
+
+---
+
+### Phase 3: Implementation (Claude, TDD)
+
+Claude implements the feature following Test-Driven Development:
+
+1. **Write failing tests first** - Define expected behavior
+2. **Implement code** - Make tests pass
+3. **Refactor** - Improve code while keeping tests green
+4. **Verify** - Run full test suite
+
+**Output:**
+- Actual source code files
+- Test files
+- `implementation-results.json` - Summary of changes
+- `test-results.json` - Test execution results
+
+---
+
+### Phase 4: Verification (Cursor + Gemini, Parallel)
+
+Both agents review the implemented code for final approval.
+
+**Cursor Verifies:**
+- No security vulnerabilities introduced
+- Code follows best practices
+- Tests are comprehensive
+- No regressions
+
+**Gemini Verifies:**
+- Architecture matches the plan
+- No technical debt introduced
+- Performance is acceptable
+- Design patterns properly applied
+
+**Output:**
+- `cursor-review.json` - Final code review
+- `gemini-review.json` - Final architecture review
+- `verification-results.json` - Combined results
+- `ready-to-merge.json` - Final approval status
+
+**Approval Policy:** `ALL_MUST_APPROVE`
+- Both agents must explicitly approve
+- Combined score >= 7.0/10
+- No blocking issues
+
+**If not approved:** Claude fixes issues and re-verifies
+
+---
+
+### Phase 5: Completion (Claude)
+
+Generate final documentation and metrics.
+
+**Output:**
+- `COMPLETION.md` - Workflow summary document
+- `metrics.json` - Performance and quality metrics
+- Final state update
+
+---
+
+## Agent Specializations
+
+| Agent | CLI Tool | Role | Expertise Areas |
+|-------|----------|------|-----------------|
+| **Claude Code** | `claude` | Lead Orchestrator | Planning, implementation, coordination, TDD |
+| **Cursor Agent** | `cursor` | Code Reviewer | Security (0.8), code quality (0.7), testing (0.7) |
+| **Gemini Agent** | `gemini` | Architecture Reviewer | Architecture (0.7), scalability (0.8), performance (0.6) |
+
+### Expertise Weights (for conflict resolution)
+
+When agents disagree, the system uses weighted expertise:
+
+| Area | Cursor Weight | Gemini Weight |
+|------|--------------|---------------|
+| Security | 0.8 | 0.2 |
+| Code Quality | 0.7 | 0.3 |
+| Testing | 0.7 | 0.3 |
+| Architecture | 0.3 | 0.7 |
+| Scalability | 0.2 | 0.8 |
+| Performance | 0.4 | 0.6 |
+| Maintainability | 0.6 | 0.4 |
+
+---
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.10+
-- At least one AI CLI tool:
-  - Claude Code CLI (`claude`)
-  - Cursor Agent CLI (`cursor-agent`) - optional
-  - Gemini CLI (`gemini`) - optional
+- Git
+- AI CLI tools:
+  - **Claude Code CLI** (`claude`) - Required
+  - **Cursor CLI** (`cursor`) - Optional but recommended
+  - **Gemini CLI** (`gemini`) - Optional but recommended
 
 ### Setup
 
 ```bash
 # Clone the repository
-git clone git@github.com:EtroxTaran/multi-agent-development.git
-cd multi-agent-development
+git clone https://github.com/your-org/meta-architect.git
+cd meta-architect
 
-# (Optional) Install Python dependencies for testing
-pip install pytest
+# Create virtual environment (optional)
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# or: .venv\Scripts\activate  # Windows
 
-# Initialize a new project
-bash scripts/init-multi-agent.sh /path/to/your/project
+# Install dependencies
+pip install -r requirements.txt
+
+# Verify installation
+python -c "from orchestrator import Orchestrator; print('OK')"
 ```
+
+---
 
 ## Quick Start
 
 ### 1. Initialize Your Project
 
 ```bash
-bash scripts/init-multi-agent.sh ./my-project
+bash scripts/init-multi-agent.sh /path/to/your/project
 ```
 
-This creates:
-- `.workflow/` - Workflow state and phase artifacts
-- `PRODUCT.md` - Template for your feature specification
-- `AGENTS.md` - Cross-agent workflow rules (source of truth)
-- `scripts/` - CLI invocation scripts and prompt templates
-- Agent-specific context files
+This creates the workflow structure in your project.
 
 ### 2. Define Your Feature
 
@@ -160,162 +290,262 @@ Implement JWT-based authentication with login, registration, and token refresh.
 - Use bcrypt for password hashing
 - Store tokens in HTTP-only cookies
 - Implement rate limiting on auth endpoints
+
+## Test Strategy
+- Unit tests for all auth functions
+- Integration tests for API endpoints
+- Security tests for token validation
 ```
 
-### 3. Start Orchestration
+### 3. Start the Workflow
 
 ```bash
-# Start Claude Code in the project
-cd my-project
+cd /path/to/your/project
 claude
-
-# Ask Claude to implement the feature
-> Implement the feature described in PRODUCT.md using the multi-agent workflow
 ```
 
-Claude Code will orchestrate the entire workflow automatically.
+In Claude Code, say:
+```
+Implement the feature from PRODUCT.md
+```
 
-## Workflow Phases
+Or use the skill directly:
+```
+/orchestrate
+```
 
-| Phase | Name | Lead | Reviewers | Output |
-|-------|------|------|-----------|--------|
-| 1 | Planning | Claude | - | `plan.json`, `PLAN.md` |
-| 2 | Validation | Claude | Cursor, Gemini | `*-feedback.json`, `consolidated-feedback.json` |
-| 3 | Implementation | Claude | - | Code + tests |
-| 4 | Verification | Claude | Cursor, Gemini | `*-review.json`, `ready-to-merge.json` |
-| 5 | Completion | Claude | - | `COMPLETION.md`, `metrics.json` |
+Claude will automatically execute all 5 phases.
 
-### Phase Details
+### 4. Monitor Progress
 
-#### Phase 1: Planning (Claude)
-- Reads `PRODUCT.md` specification
-- Creates structured implementation plan
-- Defines components, dependencies, test strategy
-- **Output**: `plan.json`, `PLAN.md`
+Check status at any time:
+```bash
+python -m orchestrator --status
+```
 
-#### Phase 2: Validation (Cursor + Gemini, Parallel)
-- Claude calls both agents via bash scripts
-- **Cursor reviews**: Code quality, security, maintainability
-- **Gemini reviews**: Architecture, scalability, design patterns
-- Claude consolidates feedback, iterates if needed
-- **Approval Policy**: NO_BLOCKERS (score ≥ 6.0)
+Or in Claude Code:
+```
+/phase-status
+```
 
-#### Phase 3: Implementation (Claude, TDD)
-- Writes tests first (expect failures)
-- Implements code to make tests pass
-- Runs full test suite
-- **Output**: `implementation-results.json`, `test-results.json`
-
-#### Phase 4: Verification (Cursor + Gemini, Parallel)
-- Claude calls both agents for final review
-- Both must approve for completion
-- If issues found, fix and re-verify
-- **Approval Policy**: ALL_MUST_APPROVE (score ≥ 7.0)
-
-#### Phase 5: Completion
-- Generates workflow summary
-- Creates metrics report
-- Updates final state
-- **Output**: `COMPLETION.md`, `WORKFLOW-SUMMARY.md`
+---
 
 ## Project Structure
 
-After initialization:
+After initialization, your project will have:
 
 ```
 your-project/
-├── PRODUCT.md              # Your feature spec (edit this!)
+├── PRODUCT.md              # Your feature specification (edit this!)
 ├── AGENTS.md               # Workflow rules (source of truth)
-├── CLAUDE.md               # Claude-specific context
-├── GEMINI.md               # Gemini-specific context
+├── CLAUDE.md               # Claude-specific instructions
+├── GEMINI.md               # Gemini-specific instructions
+│
 ├── .claude/
 │   └── system.md           # Claude system prompt
 ├── .cursor/
 │   └── rules               # Cursor rules
+├── .gemini/
+│   └── GEMINI.md           # Gemini context
+│
 ├── scripts/
 │   ├── call-cursor.sh      # Invoke Cursor CLI
 │   ├── call-gemini.sh      # Invoke Gemini CLI
 │   └── prompts/            # Prompt templates
+│
 └── .workflow/
-    ├── state.json          # Workflow state
-    ├── coordination.log    # Text logs
-    ├── coordination.jsonl  # JSON logs
+    ├── state.json          # Workflow state machine
+    ├── coordination.log    # Human-readable logs
+    ├── coordination.jsonl  # Structured JSON logs
+    │
     └── phases/
         ├── planning/       # Phase 1 outputs
+        │   ├── plan.json
+        │   └── PLAN.md
         ├── validation/     # Phase 2 outputs
+        │   ├── cursor-feedback.json
+        │   ├── gemini-feedback.json
+        │   └── consolidated-feedback.json
         ├── implementation/ # Phase 3 outputs
+        │   ├── implementation-results.json
+        │   └── test-results.json
         ├── verification/   # Phase 4 outputs
+        │   ├── cursor-review.json
+        │   ├── gemini-review.json
+        │   └── ready-to-merge.json
         └── completion/     # Phase 5 outputs
+            ├── COMPLETION.md
+            └── metrics.json
 ```
 
 ### Meta-Architect Source Structure
 
 ```
-multi-agent-development/
+meta-architect/
 ├── orchestrator/           # Python orchestration library
+│   ├── __init__.py
+│   ├── orchestrator.py     # Main Orchestrator class
 │   ├── agents/             # Agent CLI wrappers
+│   │   ├── base.py         # BaseAgent class
+│   │   ├── claude.py       # ClaudeAgent
+│   │   ├── cursor.py       # CursorAgent
+│   │   └── gemini.py       # GeminiAgent
 │   ├── phases/             # Phase implementations
-│   └── utils/              # Utilities (state, logging, context, approval)
+│   │   ├── base.py         # BasePhase class
+│   │   ├── phase1_planning.py
+│   │   ├── phase2_validation.py
+│   │   ├── phase3_implementation.py
+│   │   ├── phase4_verification.py
+│   │   └── phase5_completion.py
+│   └── utils/              # Utilities
+│       ├── state.py        # StateManager
+│       ├── logging.py      # OrchestrationLogger
+│       ├── approval.py     # ApprovalEngine
+│       ├── conflict_resolution.py
+│       ├── context.py      # ContextManager (drift detection)
+│       ├── git_operations.py  # GitOperationsManager
+│       └── validation.py   # Feedback validation
 ├── scripts/
 │   ├── init-multi-agent.sh # Project initialization
 │   ├── call-cursor.sh      # Cursor CLI wrapper
 │   └── call-gemini.sh      # Gemini CLI wrapper
 ├── templates/              # Project templates
-├── schemas/                # JSON schemas
+├── schemas/                # JSON validation schemas
 ├── tests/                  # Test suite
 └── examples/               # Example projects
 ```
 
+---
+
 ## Configuration
+
+### Workflow State (`state.json`)
+
+```json
+{
+  "project_name": "my-feature",
+  "current_phase": 2,
+  "iteration_count": 1,
+  "phases": {
+    "planning": { "status": "completed", "attempts": 1 },
+    "validation": { "status": "in_progress", "attempts": 1 },
+    "implementation": { "status": "pending", "attempts": 0 },
+    "verification": { "status": "pending", "attempts": 0 },
+    "completion": { "status": "pending", "attempts": 0 }
+  },
+  "git_commits": [
+    { "phase": 1, "hash": "abc123", "message": "[orchestrator] Phase 1: planning complete" }
+  ]
+}
+```
+
+### Phase Status Values
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Not yet started |
+| `in_progress` | Currently executing |
+| `completed` | Successfully finished |
+| `failed` | Failed (will retry) |
+| `blocked` | Blocked by issues |
+
+---
+
+## Approval & Conflict Resolution
 
 ### Approval Policies
 
 | Policy | Description | Default Phase |
 |--------|-------------|---------------|
-| `NO_BLOCKERS` | Approve if no blocking issues and score meets threshold | Phase 2 |
-| `ALL_MUST_APPROVE` | Both agents must explicitly approve | Phase 4 |
-| `WEIGHTED_SCORE` | Weighted average of scores must meet threshold | - |
-| `MAJORITY` | At least one agent must approve | - |
+| `NO_BLOCKERS` | No blocking issues, score >= 6.0 | Phase 2 |
+| `ALL_MUST_APPROVE` | Both agents approve, score >= 7.0 | Phase 4 |
+| `WEIGHTED_SCORE` | Weighted average meets threshold | Custom |
+| `MAJORITY` | At least one agent approves | Custom |
 
 ### Conflict Resolution Strategies
 
+When Cursor and Gemini disagree:
+
 | Strategy | Description |
 |----------|-------------|
-| `WEIGHTED` | Prefer agent with higher expertise for the area (default) |
+| `WEIGHTED` | Use expertise weights for the area (default) |
 | `CONSERVATIVE` | Take the more cautious position |
 | `OPTIMISTIC` | Take the more permissive position |
+| `DEFER_TO_LEAD` | Claude decides |
+| `UNANIMOUS` | Both must agree or escalate |
 | `ESCALATE` | Require human decision |
-| `DEFER_TO_LEAD` | Claude decides as orchestrator |
-| `UNANIMOUS` | Both must agree, escalate if not |
 
-### Expertise Weights
+---
 
-When agents disagree, resolution uses weighted expertise:
+## CLI Reference
 
-| Area | Cursor | Gemini |
-|------|--------|--------|
-| Security | 0.8 | 0.2 |
-| Architecture | 0.3 | 0.7 |
-| Code Quality | 0.7 | 0.3 |
-| Scalability | 0.2 | 0.8 |
-| Maintainability | 0.6 | 0.4 |
-| Testing | 0.7 | 0.3 |
-| Performance | 0.4 | 0.6 |
+### Python Orchestrator
 
-## Orchestrator Library
+```bash
+# Start workflow from phase 1
+python -m orchestrator --start
 
-### Using as a Python Library
+# Resume from last incomplete phase
+python -m orchestrator --resume
+
+# Start from specific phase
+python -m orchestrator --phase 3
+
+# Check current status
+python -m orchestrator --status
+
+# Health check (agent availability)
+python -m orchestrator --health
+
+# Reset all phases
+python -m orchestrator --reset
+
+# Rollback to before phase N
+python -m orchestrator --rollback 3
+
+# Skip validation phase
+python -m orchestrator --start --skip-validation
+
+# Disable auto-commit
+python -m orchestrator --start --no-commit
+
+# Set max retries
+python -m orchestrator --start --max-retries 5
+
+# Debug output
+python -m orchestrator --start --debug
+```
+
+### Agent Scripts
+
+```bash
+# Call Cursor for code review
+bash scripts/call-cursor.sh <prompt-file> <output-file> [project-dir]
+
+# Call Gemini for architecture review
+bash scripts/call-gemini.sh <prompt-file> <output-file> [project-dir]
+```
+
+### Claude Code Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/orchestrate` | Start or resume the 5-phase workflow |
+| `/phase-status` | Show current workflow status |
+| `/validate` | Run Phase 2 validation manually |
+| `/verify` | Run Phase 4 verification manually |
+| `/resolve-conflict` | Resolve agent disagreements |
+
+---
+
+## Python API
+
+### Basic Usage
 
 ```python
 from orchestrator import Orchestrator
-from orchestrator.utils import (
-    StateManager,
-    ApprovalEngine,
-    ConflictResolver,
-    ContextManager,
-)
 
-# Initialize orchestrator
+# Initialize
 orch = Orchestrator(
     project_dir="/path/to/project",
     max_retries=3,
@@ -324,63 +554,64 @@ orch = Orchestrator(
 
 # Run full workflow
 result = orch.run(start_phase=1, end_phase=5)
+print(f"Success: {result['success']}")
+
+# Resume interrupted workflow
+result = orch.resume()
+
+# Check status
+status = orch.status()
+print(f"Current phase: {status['current_phase']}")
+
+# Health check
+health = orch.health_check()
+print(f"Agents: {health['agents']}")
+
+# Rollback
+result = orch.rollback_to_phase(3)
 ```
 
 ### State Management
 
 ```python
-from orchestrator.utils import StateManager
+from orchestrator.utils import StateManager, PhaseStatus
 
 state = StateManager("/path/to/project")
 state.load()
 
-# Get workflow summary
+# Get phase info
+phase = state.get_phase(2)
+print(f"Status: {phase.status}")
+print(f"Attempts: {phase.attempts}")
+
+# Check if can retry
+if state.can_retry(2):
+    state.reset_phase(2)
+
+# Get summary
 summary = state.get_summary()
-print(f"Phase: {summary['current_phase']}")
-print(f"Iterations: {summary['iteration_count']}")
-
-# Track iterations
-state.increment_iteration()
 ```
 
-### Context Management
-
-```python
-from orchestrator.utils import ContextManager
-
-ctx = ContextManager("/path/to/project")
-
-# Capture initial context
-context = ctx.capture_context()
-
-# Check for drift later
-drift = ctx.validate_context(context)
-if drift.has_drift:
-    print(f"Changed: {drift.changed_files}")
-    print(ctx.get_drift_summary(drift))
-```
-
-### Custom Approval Configuration
+### Approval Engine
 
 ```python
 from orchestrator.utils import ApprovalEngine, ApprovalConfig, ApprovalPolicy
 
 engine = ApprovalEngine()
 
-# Stricter config for Phase 2
+# Evaluate validation feedback
+result = engine.evaluate_for_validation(cursor_feedback, gemini_feedback)
+print(f"Approved: {result.approved}")
+print(f"Reasoning: {result.reasoning}")
+
+# Custom configuration
 config = ApprovalConfig(
     policy=ApprovalPolicy.ALL_MUST_APPROVE,
     minimum_score=8.0,
-    require_both_agents=True,
 )
-
 result = engine.evaluate_for_validation(
-    cursor_feedback,
-    gemini_feedback,
-    config=config,
+    cursor_feedback, gemini_feedback, config=config
 )
-print(f"Approved: {result.approved}")
-print(f"Reasoning: {result.reasoning}")
 ```
 
 ### Conflict Resolution
@@ -392,42 +623,91 @@ resolver = ConflictResolver(default_strategy=ResolutionStrategy.WEIGHTED)
 
 # Detect and resolve conflicts
 result = resolver.resolve_all(cursor_feedback, gemini_feedback)
-if result.has_conflicts:
-    print(f"Conflicts: {len(result.conflicts)}")
-    print(f"Unresolved: {result.unresolved_count}")
+print(f"Conflicts: {len(result.conflicts)}")
+print(f"Unresolved: {result.unresolved_count}")
 
-# Get consensus recommendation
-consensus = resolver.get_consensus_recommendation(cursor_feedback, gemini_feedback)
-print(f"Recommendation: {consensus['recommendation']}")
+# Get consensus
+consensus = resolver.get_consensus_recommendation(
+    cursor_feedback, gemini_feedback
+)
 ```
 
-## CLI Usage
+---
 
-### Invoking Agents Directly
+## Troubleshooting
 
-```bash
-# Cursor (Code Review)
-bash scripts/call-cursor.sh <prompt-file> <output-file> [project-dir]
+### Agent CLI Not Found
 
-# Gemini (Architecture Review)
-bash scripts/call-gemini.sh <prompt-file> <output-file> [project-dir]
+```
+Error: cursor CLI not found
 ```
 
-### Orchestrator CLI (Python)
+Install missing CLI tools or set environment variables:
+```bash
+export CURSOR_CLI_PATH=/path/to/cursor
+export GEMINI_CLI_PATH=/path/to/gemini
+```
+
+The workflow can proceed with available agents.
+
+### Context Drift Detected
+
+```
+WARNING: Context drift detected - AGENTS.md modified
+```
+
+A tracked file changed mid-workflow. Options:
+- Continue (default): Warning logged, workflow proceeds
+- Sync: Update checksums with `state.sync_context()`
+- Reset: Start workflow from Phase 1
+
+### Max Iterations Reached
+
+After 3 failed validation/verification attempts:
+- Claude summarizes blocking issues
+- Asks for human guidance
+- Options: continue, abort, or modify approach
+
+### Workflow Stuck
 
 ```bash
-# Run full workflow
-python -m orchestrator --start
-
-# Resume from specific phase
-python -m orchestrator --resume --phase 3
-
-# Check status
+# Check what's happening
 python -m orchestrator --status
 
-# Reset workflow
+# View logs
+cat .workflow/coordination.log
+
+# Reset specific phase
 python -m orchestrator --reset
+
+# Or rollback
+python -m orchestrator --rollback 2
 ```
+
+### Tests Failing
+
+If Phase 3 tests fail:
+1. Check `.workflow/phases/implementation/test-results.json`
+2. Review the error messages
+3. Claude will attempt to fix and re-run (up to max retries)
+
+---
+
+## Performance Optimizations
+
+The system includes several performance optimizations:
+
+| Optimization | Description |
+|--------------|-------------|
+| **Batched Git Operations** | Single subprocess for status+add+commit+hash |
+| **Unified Timeouts** | No timeout stacking in parallel execution |
+| **Streaming Subprocess** | Memory-efficient output capture with size limits |
+| **Cached Repo Detection** | Git repo check cached after first call |
+| **Parallel Agent Execution** | Cursor and Gemini run simultaneously |
+
+See `OPTIMIZATION_BACKLOG.md` for future improvements.
+
+---
 
 ## Testing
 
@@ -436,105 +716,32 @@ python -m orchestrator --reset
 python -m pytest tests/ -v
 
 # Run specific test modules
-python -m pytest tests/test_context.py -v
-python -m pytest tests/test_approval.py -v
-python -m pytest tests/test_conflict_resolution.py -v
-python -m pytest tests/test_state.py -v
+python -m pytest tests/test_orchestrator.py -v
 python -m pytest tests/test_phases.py -v
+python -m pytest tests/test_approval.py -v
 
 # Run with coverage
 python -m pytest tests/ --cov=orchestrator --cov-report=html
 ```
 
-## Troubleshooting
-
-### CLI Not Found
-
-```
-Error: cursor-agent CLI not found
-```
-
-Install the missing CLI:
-```bash
-# Cursor Agent
-npm install -g @anthropic/cursor-agent
-
-# Gemini CLI
-npm install -g @google/gemini-cli
-```
-
-The workflow can proceed with available agents if not all are installed.
-
-### Context Drift Detected
-
-```
-WARNING: Context drift detected in phase 2
-  Modified: agents
-```
-
-This means AGENTS.md or another tracked file changed mid-workflow. Options:
-- Continue (default): Warning is logged, workflow proceeds
-- Block: Set `block_on_drift=True` in phase configuration
-- Sync: Call `state.sync_context()` to update checksums
-
-### Agent Feedback Requires Changes
-
-Claude will automatically:
-1. Read the feedback
-2. Update the plan/code
-3. Re-submit for review
-4. Track iteration count
-
-### Max Iterations Reached
-
-After 3 iterations without approval:
-- Claude will summarize the issues
-- Ask for human guidance
-- Options: continue, abort, or modify approach
-
-### Workflow Stuck
-
-```bash
-# Check current state
-python -m orchestrator --status
-
-# Reset specific phase
-python -m orchestrator --reset-phase 2
-
-# Full reset
-python -m orchestrator --reset
-```
-
-## JSON Schemas
-
-All data structures are validated against schemas in `schemas/`:
-
-| Schema | Purpose |
-|--------|---------|
-| `state-schema.json` | Workflow state structure |
-| `plan-schema.json` | Implementation plan format |
-| `feedback-schema.json` | Agent feedback format |
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`python -m pytest tests/ -v`)
-5. Commit (`git commit -m 'Add amazing feature'`)
-6. Push (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
+---
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
+---
 
-- Built with Claude Code, Cursor, and Gemini
-- Inspired by multi-agent orchestration patterns from industry research
-- Follows 2025-2026 best practices for AI-assisted development
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/improvement`)
+3. Make your changes
+4. Run tests (`python -m pytest tests/ -v`)
+5. Commit (`git commit -m 'Add improvement'`)
+6. Push (`git push origin feature/improvement`)
+7. Open a Pull Request
 
 ---
 
-**Note**: This system requires access to AI CLI tools. Ensure you have the appropriate API keys configured before use.
+Built with Claude Code, Cursor, and Gemini.

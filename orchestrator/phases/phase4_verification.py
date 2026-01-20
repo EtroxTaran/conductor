@@ -10,10 +10,9 @@ from ..agents.base import AgentResult
 from ..utils.approval import ApprovalEngine, ApprovalConfig, ApprovalPolicy
 from ..utils.conflict_resolution import ConflictResolver, ResolutionStrategy
 
-# Default timeout for parallel verification (5 minutes)
-PARALLEL_VERIFICATION_TIMEOUT = 300
-# Timeout for individual future result retrieval
-FUTURE_RESULT_TIMEOUT = 30
+# Unified timeout for parallel verification (5 minutes)
+# Uses single timeout via wait() to avoid timeout stacking issues
+PARALLEL_TIMEOUT = 300
 
 
 class VerificationPhase(BasePhase):
@@ -166,10 +165,11 @@ class VerificationPhase(BasePhase):
         test_results: dict,
         plan: dict,
     ) -> Tuple[AgentResult, AgentResult]:
-        """Run reviewers in parallel with proper exception handling.
+        """Run reviewers in parallel with unified timeout handling.
 
-        Uses concurrent.futures.as_completed() to handle timeouts and exceptions
-        gracefully, ensuring that if one agent fails, the other's results are preserved.
+        Uses concurrent.futures.wait() with a single timeout to avoid
+        timeout stacking issues (previously had as_completed + future.result
+        timeouts which caused unpredictable behavior).
 
         Args:
             files_changed: List of changed files to review
@@ -179,8 +179,7 @@ class VerificationPhase(BasePhase):
         Returns:
             Tuple of (cursor_result, gemini_result)
         """
-        cursor_result = None
-        gemini_result = None
+        results: dict[str, AgentResult] = {}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future_to_agent = {
@@ -192,60 +191,42 @@ class VerificationPhase(BasePhase):
                 ): "gemini",
             }
 
-            try:
-                for future in concurrent.futures.as_completed(
-                    future_to_agent, timeout=PARALLEL_VERIFICATION_TIMEOUT
-                ):
-                    agent = future_to_agent[future]
-                    try:
-                        result = future.result(timeout=FUTURE_RESULT_TIMEOUT)
-                        if agent == "cursor":
-                            cursor_result = result
-                        else:
-                            gemini_result = result
-                    except concurrent.futures.TimeoutError:
-                        self.logger.error(f"{agent} review timed out", phase=4)
-                        error_result = AgentResult(
-                            success=False,
-                            error=f"Review timed out after {FUTURE_RESULT_TIMEOUT} seconds"
-                        )
-                        if agent == "cursor":
-                            cursor_result = error_result
-                        else:
-                            gemini_result = error_result
-                    except Exception as e:
-                        self.logger.error(f"{agent} review failed: {e}", phase=4)
-                        error_result = AgentResult(
-                            success=False,
-                            error=f"Review failed: {str(e)}"
-                        )
-                        if agent == "cursor":
-                            cursor_result = error_result
-                        else:
-                            gemini_result = error_result
+            # Single unified timeout using wait()
+            done, not_done = concurrent.futures.wait(
+                future_to_agent.keys(),
+                timeout=PARALLEL_TIMEOUT,
+                return_when=concurrent.futures.ALL_COMPLETED
+            )
 
-            except concurrent.futures.TimeoutError:
-                self.logger.error(
-                    f"Parallel verification timed out after {PARALLEL_VERIFICATION_TIMEOUT}s",
-                    phase=4
+            # Process completed futures (no additional timeout needed)
+            for future in done:
+                agent = future_to_agent[future]
+                try:
+                    results[agent] = future.result()  # Already completed, no timeout
+                except Exception as e:
+                    self.logger.error(f"{agent} review failed: {e}", phase=4)
+                    results[agent] = AgentResult(
+                        success=False,
+                        error=f"Review failed: {str(e)}"
+                    )
+
+            # Handle timed-out futures
+            for future in not_done:
+                agent = future_to_agent[future]
+                future.cancel()
+                self.logger.error(f"{agent} review timed out", phase=4)
+                results[agent] = AgentResult(
+                    success=False,
+                    error=f"Review timed out after {PARALLEL_TIMEOUT} seconds"
                 )
-                # Ensure we have results for any agents that didn't complete
-                if cursor_result is None:
-                    cursor_result = AgentResult(
-                        success=False,
-                        error=f"Review timed out (global timeout: {PARALLEL_VERIFICATION_TIMEOUT}s)"
-                    )
-                if gemini_result is None:
-                    gemini_result = AgentResult(
-                        success=False,
-                        error=f"Review timed out (global timeout: {PARALLEL_VERIFICATION_TIMEOUT}s)"
-                    )
 
         # Ensure we always return valid results
-        if cursor_result is None:
-            cursor_result = AgentResult(success=False, error="No result received from cursor")
-        if gemini_result is None:
-            gemini_result = AgentResult(success=False, error="No result received from gemini")
+        cursor_result = results.get("cursor") or AgentResult(
+            success=False, error="No result received from cursor"
+        )
+        gemini_result = results.get("gemini") or AgentResult(
+            success=False, error="No result received from gemini"
+        )
 
         return cursor_result, gemini_result
 

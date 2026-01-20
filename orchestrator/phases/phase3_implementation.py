@@ -1,11 +1,18 @@
 """Phase 3: Implementation - Claude implements the plan with TDD approach."""
 
 import json
+import selectors
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
 from .base import BasePhase
+
+# Default timeout for test commands (5 minutes)
+TEST_TIMEOUT = 300
+# Maximum output size to capture (5KB)
+MAX_OUTPUT_SIZE = 5000
 
 
 class ImplementationPhase(BasePhase):
@@ -177,36 +184,20 @@ class ImplementationPhase(BasePhase):
         for cmd in test_commands:
             self.logger.info(f"Running: {cmd}", phase=3)
             try:
-                result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    cwd=self.project_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-
-                output = {
-                    "command": cmd,
-                    "exit_code": result.returncode,
-                    "stdout": result.stdout[:5000] if result.stdout else "",
-                    "stderr": result.stderr[:5000] if result.stderr else "",
-                }
+                # Use streaming subprocess for memory-efficient output capture
+                output = self._run_tests_streaming(cmd)
                 test_results["command_outputs"].append(output)
 
-                if result.returncode != 0:
+                if output["exit_code"] != 0:
                     all_passed = False
                     test_results["errors"].append(f"Command failed: {cmd}")
 
                 # Try to parse test counts from output
-                counts = self._parse_test_counts(result.stdout)
+                counts = self._parse_test_counts(output["stdout"])
                 test_results["passed"] += counts.get("passed", 0)
                 test_results["failed"] += counts.get("failed", 0)
                 test_results["skipped"] += counts.get("skipped", 0)
 
-            except subprocess.TimeoutExpired:
-                all_passed = False
-                test_results["errors"].append(f"Command timed out: {cmd}")
             except Exception as e:
                 all_passed = False
                 test_results["errors"].append(f"Error running {cmd}: {str(e)}")
@@ -214,6 +205,96 @@ class ImplementationPhase(BasePhase):
         test_results["all_passed"] = all_passed and test_results["failed"] == 0
 
         return test_results
+
+    def _run_tests_streaming(
+        self,
+        cmd: str,
+        max_output: int = MAX_OUTPUT_SIZE,
+        timeout: int = TEST_TIMEOUT,
+    ) -> dict:
+        """Run tests with streaming output capture for memory efficiency.
+
+        Instead of buffering the entire output and then truncating (which
+        wastes memory for large outputs), this streams the output and
+        stops capturing once the size limit is reached.
+
+        Args:
+            cmd: Shell command to run
+            max_output: Maximum bytes to capture per stream (default 5KB)
+            timeout: Command timeout in seconds (default 5 minutes)
+
+        Returns:
+            Dict with command, exit_code, stdout, stderr
+        """
+        process = subprocess.Popen(
+            cmd,
+            shell=True,
+            cwd=self.project_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        stdout_size = 0
+        stderr_size = 0
+
+        try:
+            sel = selectors.DefaultSelector()
+            sel.register(process.stdout, selectors.EVENT_READ)
+            sel.register(process.stderr, selectors.EVENT_READ)
+
+            start_time = time.time()
+
+            while process.poll() is None:
+                # Check timeout
+                if time.time() - start_time > timeout:
+                    process.kill()
+                    process.wait()
+                    break
+
+                # Wait for data with 1 second timeout
+                ready = sel.select(timeout=1)
+                for key, _ in ready:
+                    data = key.fileobj.read(1024)
+                    if not data:
+                        continue
+
+                    if key.fileobj == process.stdout:
+                        if stdout_size < max_output:
+                            remaining = max_output - stdout_size
+                            stdout_chunks.append(data[:remaining])
+                            stdout_size += len(data)
+                    elif key.fileobj == process.stderr:
+                        if stderr_size < max_output:
+                            remaining = max_output - stderr_size
+                            stderr_chunks.append(data[:remaining])
+                            stderr_size += len(data)
+
+            # Read any remaining data after process ends
+            remaining_stdout = process.stdout.read()
+            if remaining_stdout and stdout_size < max_output:
+                remaining = max_output - stdout_size
+                stdout_chunks.append(remaining_stdout[:remaining])
+
+            remaining_stderr = process.stderr.read()
+            if remaining_stderr and stderr_size < max_output:
+                remaining = max_output - stderr_size
+                stderr_chunks.append(remaining_stderr[:remaining])
+
+            sel.close()
+
+        except Exception:
+            process.kill()
+            process.wait()
+
+        return {
+            "command": cmd,
+            "exit_code": process.returncode if process.returncode is not None else -1,
+            "stdout": "".join(stdout_chunks),
+            "stderr": "".join(stderr_chunks),
+        }
 
     def _detect_test_commands(self) -> list[str]:
         """Detect test commands based on project structure."""
