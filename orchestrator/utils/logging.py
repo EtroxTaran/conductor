@@ -1,7 +1,9 @@
 """Logging utilities for the orchestration workflow."""
 
 import json
+import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
@@ -33,14 +35,71 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 
+class SecretsRedactor:
+    """Redact secrets from log messages.
+
+    Automatically detects and redacts sensitive information like
+    API keys, passwords, tokens, and bearer tokens from log output.
+    """
+
+    PATTERNS = [
+        # OpenAI/Anthropic style API keys (must come first to catch before generic patterns)
+        (r'\bsk-[a-zA-Z0-9]{10,}',
+         '***API_KEY_REDACTED***'),
+        # API keys (various formats)
+        (r'(?i)(api[_-]?key|apikey)["\s:=]+["\']?([a-zA-Z0-9_\-]{20,})["\']?',
+         r'\1=***REDACTED***'),
+        # Passwords
+        (r'(?i)(password|passwd|pwd)["\s:=]+["\']?([^\s"\']+)["\']?',
+         r'\1=***REDACTED***'),
+        # Secrets and tokens
+        (r'(?i)(secret|token)["\s:=]+["\']?([a-zA-Z0-9_\-]{10,})["\']?',
+         r'\1=***REDACTED***'),
+        # Bearer tokens
+        (r'(?i)(bearer\s+)([a-zA-Z0-9_\-\.]+)',
+         r'\1***REDACTED***'),
+        # AWS-style credentials
+        (r'(?i)(aws[_-]?(?:access[_-]?key|secret)[_-]?(?:id)?)["\s:=]+["\']?([A-Z0-9]{16,})["\']?',
+         r'\1=***REDACTED***'),
+        # Generic private key patterns
+        (r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC )?PRIVATE KEY-----',
+         '***PRIVATE_KEY_REDACTED***'),
+    ]
+
+    def __init__(self):
+        """Initialize with compiled patterns."""
+        self._compiled_patterns = [
+            (re.compile(pattern), replacement)
+            for pattern, replacement in self.PATTERNS
+        ]
+
+    def redact(self, message: str) -> str:
+        """Redact sensitive information from message.
+
+        Args:
+            message: The log message that may contain secrets
+
+        Returns:
+            The message with secrets redacted
+        """
+        for pattern, replacement in self._compiled_patterns:
+            message = pattern.sub(replacement, message)
+        return message
+
+
 class OrchestrationLogger:
-    """Logger for multi-agent orchestration."""
+    """Logger for multi-agent orchestration.
+
+    Thread-safe logging with automatic secrets redaction.
+    Outputs to console, plain text file, and JSON lines file.
+    """
 
     def __init__(
         self,
         workflow_dir: str | Path,
         console_output: bool = True,
         min_level: LogLevel = LogLevel.INFO,
+        redact_secrets: bool = True,
     ):
         """Initialize the logger.
 
@@ -48,12 +107,15 @@ class OrchestrationLogger:
             workflow_dir: Directory for log files
             console_output: Whether to print to console
             min_level: Minimum log level to record
+            redact_secrets: Whether to redact secrets from logs
         """
         self.workflow_dir = Path(workflow_dir)
         self.log_file = self.workflow_dir / "coordination.log"
         self.json_log_file = self.workflow_dir / "coordination.jsonl"
         self.console_output = console_output
         self.min_level = min_level
+        self._log_lock = threading.Lock()
+        self._redactor = SecretsRedactor() if redact_secrets else None
         self._ensure_log_dir()
 
     def _ensure_log_dir(self) -> None:
@@ -157,7 +219,7 @@ class OrchestrationLogger:
         agent: Optional[str] = None,
         extra: Optional[dict] = None,
     ) -> None:
-        """Log a message.
+        """Log a message (thread-safe).
 
         Args:
             level: Log level
@@ -169,20 +231,50 @@ class OrchestrationLogger:
         if not self._should_log(level):
             return
 
-        # Console output
-        if self.console_output:
-            formatted = self._format_console(level, message, phase, agent)
-            print(formatted, file=sys.stderr if level == LogLevel.ERROR else sys.stdout)
+        # Redact secrets from message if enabled
+        if self._redactor:
+            message = self._redactor.redact(message)
+            # Also redact from extra data if present
+            if extra:
+                extra = self._redact_dict(extra)
 
-        # File output (plain text)
-        with open(self.log_file, "a") as f:
-            formatted = self._format_file(level, message, phase, agent)
-            f.write(formatted + "\n")
+        with self._log_lock:
+            # Console output
+            if self.console_output:
+                formatted = self._format_console(level, message, phase, agent)
+                print(formatted, file=sys.stderr if level == LogLevel.ERROR else sys.stdout)
 
-        # JSON log
-        with open(self.json_log_file, "a") as f:
-            entry = self._format_json(level, message, phase, agent, extra)
-            f.write(json.dumps(entry) + "\n")
+            # File output (plain text)
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                formatted = self._format_file(level, message, phase, agent)
+                f.write(formatted + "\n")
+
+            # JSON log
+            with open(self.json_log_file, "a", encoding="utf-8") as f:
+                entry = self._format_json(level, message, phase, agent, extra)
+                f.write(json.dumps(entry) + "\n")
+
+    def _redact_dict(self, data: dict) -> dict:
+        """Recursively redact secrets from a dictionary."""
+        if not self._redactor:
+            return data
+
+        result = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                result[key] = self._redactor.redact(value)
+            elif isinstance(value, dict):
+                result[key] = self._redact_dict(value)
+            elif isinstance(value, list):
+                result[key] = [
+                    self._redact_dict(item) if isinstance(item, dict)
+                    else self._redactor.redact(item) if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
+            else:
+                result[key] = value
+        return result
 
     def debug(self, message: str, **kwargs) -> None:
         """Log debug message."""

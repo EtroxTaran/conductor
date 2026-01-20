@@ -9,6 +9,16 @@ from typing import Any, Optional
 from dataclasses import dataclass
 
 
+# Default timeouts by phase (in seconds)
+PHASE_TIMEOUTS = {
+    1: 900,   # Planning: 15 minutes
+    2: 600,   # Validation: 10 minutes
+    3: 1800,  # Implementation: 30 minutes
+    4: 600,   # Verification: 10 minutes
+    5: 300,   # Completion: 5 minutes
+}
+
+
 @dataclass
 class AgentResult:
     """Result from an agent execution."""
@@ -40,15 +50,18 @@ class BaseAgent(ABC):
         self,
         project_dir: str | Path,
         timeout: int = 300,
+        phase_timeouts: Optional[dict[int, int]] = None,
     ):
         """Initialize the agent.
 
         Args:
             project_dir: Root directory of the project
-            timeout: Timeout in seconds for command execution
+            timeout: Default timeout in seconds for command execution
+            phase_timeouts: Optional per-phase timeout overrides
         """
         self.project_dir = Path(project_dir)
         self.timeout = timeout
+        self.phase_timeouts = phase_timeouts or PHASE_TIMEOUTS.copy()
 
     @abstractmethod
     def build_command(self, prompt: str, **kwargs) -> list[str]:
@@ -63,10 +76,24 @@ class BaseAgent(ABC):
         """
         pass
 
+    def get_timeout_for_phase(self, phase_num: Optional[int] = None) -> int:
+        """Get the timeout for a specific phase.
+
+        Args:
+            phase_num: Phase number (1-5), or None for default timeout
+
+        Returns:
+            Timeout in seconds
+        """
+        if phase_num is not None and phase_num in self.phase_timeouts:
+            return self.phase_timeouts[phase_num]
+        return self.timeout
+
     def run(
         self,
         prompt: str,
         output_file: Optional[Path] = None,
+        phase: Optional[int] = None,
         **kwargs,
     ) -> AgentResult:
         """Execute the agent with the given prompt.
@@ -74,6 +101,7 @@ class BaseAgent(ABC):
         Args:
             prompt: The prompt to send to the agent
             output_file: Optional file to write output to
+            phase: Optional phase number for phase-specific timeout
             **kwargs: Additional arguments passed to build_command
 
         Returns:
@@ -83,6 +111,7 @@ class BaseAgent(ABC):
 
         command = self.build_command(prompt, **kwargs)
         start_time = time.time()
+        timeout = self.get_timeout_for_phase(phase)
 
         try:
             result = subprocess.run(
@@ -90,7 +119,7 @@ class BaseAgent(ABC):
                 cwd=self.project_dir,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout,
+                timeout=timeout,
                 env={**os.environ, "TERM": "dumb"},
             )
 
@@ -136,21 +165,42 @@ class BaseAgent(ABC):
         except subprocess.TimeoutExpired:
             return AgentResult(
                 success=False,
-                error=f"Command timed out after {self.timeout} seconds",
+                error=f"Command timed out after {timeout} seconds",
                 exit_code=-1,
-                duration_seconds=self.timeout,
+                duration_seconds=timeout,
             )
         except FileNotFoundError as e:
+            cli_cmd = self.get_cli_command()
             return AgentResult(
                 success=False,
-                error=f"Command not found: {e}",
+                error=f"CLI not found: {cli_cmd}. Is it installed? Error: {e}",
                 exit_code=-1,
                 duration_seconds=0,
             )
-        except Exception as e:
+        except PermissionError as e:
+            cli_cmd = self.get_cli_command()
             return AgentResult(
                 success=False,
-                error=f"Execution error: {str(e)}",
+                error=f"Permission denied executing {cli_cmd}: {e}",
+                exit_code=-1,
+                duration_seconds=0,
+            )
+        except OSError as e:
+            cli_cmd = self.get_cli_command()
+            return AgentResult(
+                success=False,
+                error=f"OS error executing {cli_cmd}: {e}",
+                exit_code=-1,
+                duration_seconds=time.time() - start_time,
+            )
+        except Exception as e:
+            # Log unexpected exceptions for debugging
+            import logging
+            cli_cmd = self.get_cli_command()
+            logging.error(f"Unexpected error in {cli_cmd}: {type(e).__name__}: {e}")
+            return AgentResult(
+                success=False,
+                error=f"Unexpected error: {type(e).__name__}: {e}",
                 exit_code=-1,
                 duration_seconds=time.time() - start_time,
             )

@@ -204,6 +204,9 @@ class Orchestrator:
         phase_state = self.state.get_phase(phase_num)
 
         while self.state.can_retry(phase_num):
+            # Print progress indicator
+            self._print_progress(phase_num, phase_name.title(), "Starting...")
+
             # Create phase instance
             phase = phase_class(
                 project_dir=self.project_dir,
@@ -364,6 +367,151 @@ class Orchestrator:
             self.state.save()
             self.logger.info("Reset all phases")
 
+    def rollback_to_phase(self, phase_num: int) -> dict:
+        """Rollback to state before specified phase.
+
+        Uses git commits recorded during workflow execution to restore
+        the codebase to a previous state.
+
+        Args:
+            phase_num: Phase number to rollback to (will undo this phase and later)
+
+        Returns:
+            Dictionary with rollback results
+        """
+        self.state.load()
+        commits = self.state.state.git_commits
+
+        # Find commit before this phase
+        target_commit = None
+        for commit in reversed(commits):
+            if commit.get("phase", 0) < phase_num:
+                target_commit = commit.get("hash")
+                break
+
+        if not target_commit:
+            return {
+                "success": False,
+                "error": f"No commit found before phase {phase_num}"
+            }
+
+        # Git reset to that commit
+        try:
+            result = subprocess.run(
+                ["git", "reset", "--hard", target_commit],
+                cwd=self.project_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # Update state
+            self.state.reset_to_phase(phase_num)
+
+            self.logger.info(f"Rolled back to commit {target_commit[:8]} (before phase {phase_num})")
+
+            return {
+                "success": True,
+                "rolled_back_to": target_commit,
+                "current_phase": phase_num - 1 if phase_num > 1 else 1,
+                "message": f"Successfully rolled back to state before phase {phase_num}"
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                "success": False,
+                "error": f"Git reset failed: {e.stderr or str(e)}"
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": "Git reset timed out"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Rollback failed: {str(e)}"
+            }
+
+    def health_check(self) -> dict:
+        """Return current health status.
+
+        Checks the status of the workflow and availability of all agents.
+
+        Returns:
+            Dictionary with health status information
+        """
+        self.state.load()
+        state = self.state.state
+
+        # Check agent availability
+        from .agents import ClaudeAgent, CursorAgent, GeminiAgent
+
+        claude = ClaudeAgent(self.project_dir)
+        cursor = CursorAgent(self.project_dir)
+        gemini = GeminiAgent(self.project_dir)
+
+        agents_status = {
+            "claude": claude.check_available(),
+            "cursor": cursor.check_available(),
+            "gemini": gemini.check_available(),
+        }
+
+        # Determine overall health
+        all_agents_available = all(agents_status.values())
+        current_phase_status = None
+        if state.current_phase:
+            phase_state = self.state.get_phase(state.current_phase)
+            current_phase_status = phase_state.status.value
+
+        health_status = "healthy"
+        if not all_agents_available:
+            health_status = "degraded"
+        if current_phase_status == "failed":
+            health_status = "unhealthy"
+
+        return {
+            "status": health_status,
+            "project": state.project_name,
+            "current_phase": state.current_phase,
+            "phase_status": current_phase_status,
+            "iteration_count": state.iteration_count,
+            "last_updated": state.updated_at,
+            "agents": agents_status,
+            "has_context": state.context is not None,
+            "total_commits": len(state.git_commits),
+        }
+
+    def _print_progress(self, phase_num: int, phase_name: str, status: str) -> None:
+        """Print progress indicator.
+
+        Args:
+            phase_num: Current phase number
+            phase_name: Name of the current phase
+            status: Status message
+        """
+        phases = ["Planning", "Validation", "Implementation", "Verification", "Completion"]
+
+        # Build progress bar
+        progress_parts = []
+        for i, name in enumerate(phases, 1):
+            if i < phase_num:
+                progress_parts.append(f"[{i}]")  # Completed
+            elif i == phase_num:
+                progress_parts.append(f"[{i}*]")  # Current
+            else:
+                progress_parts.append(f"[ ]")  # Pending
+
+        progress_bar = " ".join(progress_parts)
+
+        if self.logger.console_output:
+            print()
+            print("=" * 60)
+            print(f"Phase {phase_num}/5: {phase_name} - {status}")
+            print(f"Progress: {progress_bar}")
+            print("=" * 60)
+            print()
+
 
 def main():
     """CLI entry point."""
@@ -375,7 +523,9 @@ Examples:
   python -m orchestrator --start           Start workflow from phase 1
   python -m orchestrator --resume          Resume from last incomplete phase
   python -m orchestrator --status          Show current workflow status
+  python -m orchestrator --health          Show health check status
   python -m orchestrator --reset           Reset all phases
+  python -m orchestrator --rollback 3      Rollback to before phase 3
   python -m orchestrator --phase 3         Start from specific phase
         """,
     )
@@ -396,9 +546,20 @@ Examples:
         help="Show workflow status",
     )
     parser.add_argument(
+        "--health",
+        action="store_true",
+        help="Show health check status",
+    )
+    parser.add_argument(
         "--reset",
         action="store_true",
         help="Reset workflow",
+    )
+    parser.add_argument(
+        "--rollback",
+        type=int,
+        choices=[1, 2, 3, 4, 5],
+        help="Rollback to state before specified phase",
     )
     parser.add_argument(
         "--phase",
@@ -474,6 +635,32 @@ Examples:
         for phase, state in status['phase_statuses'].items():
             emoji = "✅" if state == "completed" else "❌" if state == "failed" else "⏳"
             print(f"  {emoji} {phase}: {state}")
+        return
+
+    if args.health:
+        health = orchestrator.health_check()
+        status_emoji = "✅" if health['status'] == "healthy" else "⚠️" if health['status'] == "degraded" else "❌"
+        print(f"\nHealth Check: {status_emoji} {health['status'].upper()}")
+        print(f"\n  Project: {health['project']}")
+        print(f"  Current Phase: {health['current_phase']}")
+        print(f"  Phase Status: {health['phase_status'] or 'N/A'}")
+        print(f"  Iteration Count: {health['iteration_count']}")
+        print(f"  Last Updated: {health['last_updated']}")
+        print("\nAgent Availability:")
+        for agent, available in health['agents'].items():
+            emoji = "✅" if available else "❌"
+            print(f"  {emoji} {agent}: {'Available' if available else 'Unavailable'}")
+        return
+
+    if args.rollback:
+        result = orchestrator.rollback_to_phase(args.rollback)
+        if result['success']:
+            print(f"\n✅ Rollback successful!")
+            print(f"  Rolled back to commit: {result['rolled_back_to'][:8]}")
+            print(f"  Current phase: {result['current_phase']}")
+        else:
+            print(f"\n❌ Rollback failed: {result['error']}")
+            sys.exit(1)
         return
 
     if args.reset:

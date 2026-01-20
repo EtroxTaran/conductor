@@ -3,12 +3,18 @@
 import json
 import concurrent.futures
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from .base import BasePhase
 from ..agents.base import AgentResult
 from ..utils.approval import ApprovalEngine, ApprovalConfig, ApprovalPolicy
 from ..utils.conflict_resolution import ConflictResolver, ResolutionStrategy
+from ..utils.validation import validate_feedback
+
+# Default timeout for parallel validation (5 minutes)
+PARALLEL_VALIDATION_TIMEOUT = 300
+# Timeout for individual future result retrieval
+FUTURE_RESULT_TIMEOUT = 30
 
 
 class ValidationPhase(BasePhase):
@@ -54,13 +60,8 @@ class ValidationPhase(BasePhase):
 
         self.logger.info("Starting parallel validation", phase=2)
 
-        # Run validators in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            cursor_future = executor.submit(self._run_cursor_validation, plan)
-            gemini_future = executor.submit(self._run_gemini_validation, plan)
-
-            cursor_result = cursor_future.result()
-            gemini_result = gemini_future.result()
+        # Run validators in parallel with proper exception handling
+        cursor_result, gemini_result = self._run_parallel_validation(plan)
 
         # Process results
         cursor_feedback = self._process_result("cursor", cursor_result)
@@ -134,6 +135,84 @@ class ValidationPhase(BasePhase):
             "feedback_file": str(self.phase_dir / "consolidated-feedback.json"),
         }
 
+    def _run_parallel_validation(self, plan: dict) -> Tuple[AgentResult, AgentResult]:
+        """Run validators in parallel with proper exception handling.
+
+        Uses concurrent.futures.as_completed() to handle timeouts and exceptions
+        gracefully, ensuring that if one agent fails, the other's results are preserved.
+
+        Args:
+            plan: The plan to validate
+
+        Returns:
+            Tuple of (cursor_result, gemini_result)
+        """
+        cursor_result = None
+        gemini_result = None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_agent = {
+                executor.submit(self._run_cursor_validation, plan): "cursor",
+                executor.submit(self._run_gemini_validation, plan): "gemini",
+            }
+
+            try:
+                for future in concurrent.futures.as_completed(
+                    future_to_agent, timeout=PARALLEL_VALIDATION_TIMEOUT
+                ):
+                    agent = future_to_agent[future]
+                    try:
+                        result = future.result(timeout=FUTURE_RESULT_TIMEOUT)
+                        if agent == "cursor":
+                            cursor_result = result
+                        else:
+                            gemini_result = result
+                    except concurrent.futures.TimeoutError:
+                        self.logger.error(f"{agent} validation timed out", phase=2)
+                        error_result = AgentResult(
+                            success=False,
+                            error=f"Validation timed out after {FUTURE_RESULT_TIMEOUT} seconds"
+                        )
+                        if agent == "cursor":
+                            cursor_result = error_result
+                        else:
+                            gemini_result = error_result
+                    except Exception as e:
+                        self.logger.error(f"{agent} validation failed: {e}", phase=2)
+                        error_result = AgentResult(
+                            success=False,
+                            error=f"Validation failed: {str(e)}"
+                        )
+                        if agent == "cursor":
+                            cursor_result = error_result
+                        else:
+                            gemini_result = error_result
+
+            except concurrent.futures.TimeoutError:
+                self.logger.error(
+                    f"Parallel validation timed out after {PARALLEL_VALIDATION_TIMEOUT}s",
+                    phase=2
+                )
+                # Ensure we have results for any agents that didn't complete
+                if cursor_result is None:
+                    cursor_result = AgentResult(
+                        success=False,
+                        error=f"Validation timed out (global timeout: {PARALLEL_VALIDATION_TIMEOUT}s)"
+                    )
+                if gemini_result is None:
+                    gemini_result = AgentResult(
+                        success=False,
+                        error=f"Validation timed out (global timeout: {PARALLEL_VALIDATION_TIMEOUT}s)"
+                    )
+
+        # Ensure we always return valid results
+        if cursor_result is None:
+            cursor_result = AgentResult(success=False, error="No result received from cursor")
+        if gemini_result is None:
+            gemini_result = AgentResult(success=False, error="No result received from gemini")
+
+        return cursor_result, gemini_result
+
     def _run_cursor_validation(self, plan: dict) -> AgentResult:
         """Run Cursor validation."""
         self.logger.agent_start("cursor", "Validating plan (code quality focus)", phase=2)
@@ -167,31 +246,34 @@ class ValidationPhase(BasePhase):
         return result
 
     def _process_result(self, agent: str, result: AgentResult) -> Optional[dict]:
-        """Process agent result and extract feedback."""
-        if result.success and result.parsed_output:
-            return result.parsed_output
+        """Process agent result and extract feedback with validation.
 
+        Uses the validate_feedback function to ensure consistent output
+        format regardless of agent response variations.
+        """
+        # If we have parsed output, validate and normalize it
+        if result.success and result.parsed_output:
+            return validate_feedback(agent, result.parsed_output)
+
+        # Try to extract JSON from raw output
         if result.output:
-            # Try to extract JSON from output
             try:
                 import re
                 json_pattern = r'\{[\s\S]*"reviewer"[\s\S]*\}'
                 matches = re.findall(json_pattern, result.output)
                 for match in matches:
                     try:
-                        return json.loads(match)
+                        parsed = json.loads(match)
+                        return validate_feedback(agent, parsed)
                     except json.JSONDecodeError:
                         continue
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"Failed to extract JSON from {agent} output: {e}", phase=2)
 
-        # Return minimal feedback if extraction failed
-        return {
-            "reviewer": agent,
-            "overall_assessment": "unknown",
-            "score": 0,
-            "error": result.error or "Failed to get feedback",
-        }
+        # Return minimal validated feedback if extraction failed
+        return validate_feedback(agent, {
+            "error": result.error or "Failed to get feedback"
+        })
 
     def _consolidate_feedback(
         self,

@@ -16,16 +16,21 @@ def temp_project_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
 
-        # Create PRODUCT.md
+        # Create PRODUCT.md with all required sections
         product_md = project_dir / "PRODUCT.md"
         product_md.write_text("""# Test Feature
 
-## Summary
-A test feature for testing the orchestrator.
+## Feature
+A test feature for testing the orchestrator. This feature allows users to
+test the multi-agent orchestration system with various configurations.
 
 ## Goals
-- Test goal 1
-- Test goal 2
+- Test goal 1: Ensure system works correctly
+- Test goal 2: Validate all phases complete successfully
+- Test goal 3: Verify error handling is robust
+
+## Summary
+A comprehensive test feature for testing the orchestrator.
 """)
 
         yield project_dir

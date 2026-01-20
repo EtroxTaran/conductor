@@ -2,6 +2,9 @@
 
 import json
 import os
+import shutil
+import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
@@ -111,7 +114,11 @@ class WorkflowState:
 
 
 class StateManager:
-    """Manages workflow state persistence."""
+    """Manages workflow state persistence.
+
+    Thread-safe state management with atomic file operations to prevent
+    corruption from concurrent access or process termination during writes.
+    """
 
     PHASE_NAMES = ["planning", "validation", "implementation", "verification", "completion"]
 
@@ -124,7 +131,9 @@ class StateManager:
         self.project_dir = Path(project_dir)
         self.workflow_dir = self.project_dir / ".workflow"
         self.state_file = self.workflow_dir / "state.json"
+        self.backup_file = self.state_file.with_suffix('.json.bak')
         self._state: Optional[WorkflowState] = None
+        self._lock = threading.RLock()  # Reentrant lock for nested calls
 
     def ensure_workflow_dir(self) -> Path:
         """Ensure .workflow directory exists with proper structure."""
@@ -141,27 +150,115 @@ class StateManager:
         return self.workflow_dir
 
     def load(self) -> WorkflowState:
-        """Load state from file or create new."""
-        if self.state_file.exists():
-            with open(self.state_file, "r") as f:
-                data = json.load(f)
-            self._state = WorkflowState.from_dict(data)
-        else:
-            project_name = self.project_dir.name
-            self._state = WorkflowState(project_name=project_name)
-            self.save()
-        return self._state
+        """Load state from file with error recovery.
+
+        Attempts to load from the main state file first. If corrupted,
+        falls back to backup file. Creates new state if neither exists.
+
+        Returns:
+            WorkflowState: The loaded or newly created state
+        """
+        with self._lock:
+            if self.state_file.exists():
+                try:
+                    with open(self.state_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    self._state = WorkflowState.from_dict(data)
+                    return self._state
+
+                except json.JSONDecodeError as e:
+                    # Main state file is corrupted
+                    import logging
+                    logging.warning(f"Corrupted state file: {e}")
+
+                    # Try to recover from backup
+                    if self.backup_file.exists():
+                        try:
+                            logging.info("Attempting recovery from backup")
+                            with open(self.backup_file, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            self._state = WorkflowState.from_dict(data)
+                            # Save recovered state to main file
+                            self._atomic_save()
+                            return self._state
+                        except Exception as backup_error:
+                            logging.error(f"Backup recovery failed: {backup_error}")
+
+                    # Create new state if recovery fails
+                    logging.warning("Creating new state after corruption")
+                    self._state = WorkflowState(project_name=self.project_dir.name)
+                    self._atomic_save()
+                    return self._state
+
+                except Exception as e:
+                    import logging
+                    logging.error(f"Error loading state: {e}")
+                    self._state = WorkflowState(project_name=self.project_dir.name)
+                    self._atomic_save()
+                    return self._state
+            else:
+                project_name = self.project_dir.name
+                self._state = WorkflowState(project_name=project_name)
+                self.save()
+            return self._state
 
     def save(self) -> None:
-        """Save state to file."""
-        if self._state is None:
-            raise RuntimeError("No state loaded")
+        """Save state to file atomically with thread safety.
 
-        self.ensure_workflow_dir()
-        self._state.updated_at = datetime.now().isoformat()
+        Creates a backup of the existing state file before saving,
+        then writes to a temp file and atomically replaces the original.
+        This prevents corruption from interrupted writes.
+        """
+        with self._lock:
+            if self._state is None:
+                raise RuntimeError("No state loaded")
 
-        with open(self.state_file, "w") as f:
-            json.dump(self._state.to_dict(), f, indent=2)
+            self.ensure_workflow_dir()
+            self._state.updated_at = datetime.now().isoformat()
+            self._atomic_save()
+
+    def _atomic_save(self) -> None:
+        """Perform atomic save operation.
+
+        Writes state to a temp file first, then atomically replaces
+        the target file using os.replace().
+        """
+        # Create backup before save (if main file exists)
+        if self.state_file.exists():
+            try:
+                shutil.copy2(self.state_file, self.backup_file)
+            except Exception:
+                pass  # Backup failure shouldn't block save
+
+        data = self._state.to_dict()
+        tmp_path = None
+
+        try:
+            # Write to temp file first
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                dir=self.workflow_dir,
+                prefix='.state_',
+                suffix='.json',
+                delete=False,
+                encoding='utf-8'
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                json.dump(data, tmp_file, indent=2)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+
+            # Atomic replace
+            os.replace(tmp_path, str(self.state_file))
+
+        except Exception:
+            # Clean up temp file on failure
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except (FileNotFoundError, OSError):
+                    pass
+            raise
 
     @property
     def state(self) -> WorkflowState:
@@ -188,57 +285,63 @@ class StateManager:
         return self.workflow_dir / "phases" / phase_name
 
     def start_phase(self, phase_num: int) -> PhaseState:
-        """Mark a phase as started."""
-        phase = self.get_phase(phase_num)
-        phase.status = PhaseStatus.IN_PROGRESS
-        phase.started_at = datetime.now().isoformat()
-        phase.attempts += 1
-        self.state.current_phase = phase_num
-        self.save()
-        return phase
+        """Mark a phase as started (thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.status = PhaseStatus.IN_PROGRESS
+            phase.started_at = datetime.now().isoformat()
+            phase.attempts += 1
+            self.state.current_phase = phase_num
+            self.save()
+            return phase
 
     def complete_phase(self, phase_num: int, outputs: Optional[dict] = None) -> PhaseState:
-        """Mark a phase as completed."""
-        phase = self.get_phase(phase_num)
-        phase.status = PhaseStatus.COMPLETED
-        phase.completed_at = datetime.now().isoformat()
-        if outputs:
-            phase.outputs.update(outputs)
-        self.save()
-        return phase
+        """Mark a phase as completed (thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.status = PhaseStatus.COMPLETED
+            phase.completed_at = datetime.now().isoformat()
+            if outputs:
+                phase.outputs.update(outputs)
+            self.save()
+            return phase
 
     def fail_phase(self, phase_num: int, error: str) -> PhaseState:
-        """Mark a phase as failed."""
-        phase = self.get_phase(phase_num)
-        phase.status = PhaseStatus.FAILED
-        phase.error = error
-        self.save()
-        return phase
+        """Mark a phase as failed (thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.status = PhaseStatus.FAILED
+            phase.error = error
+            self.save()
+            return phase
 
     def block_phase(self, phase_num: int, blocker: str) -> PhaseState:
-        """Add a blocker to a phase."""
-        phase = self.get_phase(phase_num)
-        phase.status = PhaseStatus.BLOCKED
-        phase.blockers.append(blocker)
-        self.save()
-        return phase
+        """Add a blocker to a phase (thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.status = PhaseStatus.BLOCKED
+            phase.blockers.append(blocker)
+            self.save()
+            return phase
 
     def add_approval(self, phase_num: int, agent: str, approved: bool) -> PhaseState:
-        """Add an agent approval to a phase."""
-        phase = self.get_phase(phase_num)
-        phase.approvals[agent] = approved
-        self.save()
-        return phase
+        """Add an agent approval to a phase (thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.approvals[agent] = approved
+            self.save()
+            return phase
 
     def record_commit(self, phase_num: int, commit_hash: str, message: str) -> None:
-        """Record a git commit for a phase."""
-        self.state.git_commits.append({
-            "phase": phase_num,
-            "hash": commit_hash,
-            "message": message,
-            "timestamp": datetime.now().isoformat(),
-        })
-        self.save()
+        """Record a git commit for a phase (thread-safe)."""
+        with self._lock:
+            self.state.git_commits.append({
+                "phase": phase_num,
+                "hash": commit_hash,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+            })
+            self.save()
 
     def can_retry(self, phase_num: int) -> bool:
         """Check if a phase can be retried."""
@@ -246,13 +349,34 @@ class StateManager:
         return phase.attempts < phase.max_attempts
 
     def reset_phase(self, phase_num: int) -> PhaseState:
-        """Reset a phase for retry (keeps attempt count)."""
-        phase = self.get_phase(phase_num)
-        phase.status = PhaseStatus.PENDING
-        phase.blockers = []
-        phase.error = None
-        self.save()
-        return phase
+        """Reset a phase for retry (keeps attempt count, thread-safe)."""
+        with self._lock:
+            phase = self.get_phase(phase_num)
+            phase.status = PhaseStatus.PENDING
+            phase.blockers = []
+            phase.error = None
+            self.save()
+            return phase
+
+    def reset_to_phase(self, phase_num: int) -> None:
+        """Reset workflow state to before a specific phase (thread-safe).
+
+        Used for rollback operations. Resets all phases from phase_num onwards.
+
+        Args:
+            phase_num: The phase number to reset to (will reset this and all later phases)
+        """
+        with self._lock:
+            for i in range(phase_num, 6):  # Phases 1-5
+                if i <= 5:
+                    phase = self.get_phase(i)
+                    phase.status = PhaseStatus.PENDING
+                    phase.blockers = []
+                    phase.error = None
+                    phase.started_at = None
+                    phase.completed_at = None
+            self.state.current_phase = phase_num
+            self.save()
 
     def get_summary(self) -> dict:
         """Get a summary of the workflow state."""
@@ -273,39 +397,44 @@ class StateManager:
     # Iteration tracking methods
 
     def increment_iteration(self) -> int:
-        """Increment the iteration count and return new value."""
-        self.state.iteration_count += 1
-        self.save()
-        return self.state.iteration_count
+        """Increment the iteration count and return new value (thread-safe)."""
+        with self._lock:
+            self.state.iteration_count += 1
+            self.save()
+            return self.state.iteration_count
 
     def get_iteration_count(self) -> int:
         """Get current iteration count."""
-        return self.state.iteration_count
+        with self._lock:
+            return self.state.iteration_count
 
     def reset_iteration_count(self) -> None:
-        """Reset iteration count to zero."""
-        self.state.iteration_count = 0
-        self.save()
+        """Reset iteration count to zero (thread-safe)."""
+        with self._lock:
+            self.state.iteration_count = 0
+            self.save()
 
     # Context management methods
 
     def capture_context(self) -> dict:
-        """Capture current context state using ContextManager.
+        """Capture current context state using ContextManager (thread-safe).
 
         Returns:
             Dictionary representation of ContextState
         """
-        from .context import ContextManager
+        with self._lock:
+            from .context import ContextManager
 
-        ctx_manager = ContextManager(self.project_dir)
-        context_state = ctx_manager.capture_context()
-        self.state.context = context_state.to_dict()
-        self.save()
-        return self.state.context
+            ctx_manager = ContextManager(self.project_dir)
+            context_state = ctx_manager.capture_context()
+            self.state.context = context_state.to_dict()
+            self.save()
+            return self.state.context
 
     def get_context(self) -> Optional[dict]:
-        """Get stored context state."""
-        return self.state.context
+        """Get stored context state (thread-safe)."""
+        with self._lock:
+            return self.state.context
 
     def check_context_drift(self) -> tuple[bool, list[str]]:
         """Check if context files have changed since capture.
@@ -326,12 +455,13 @@ class StateManager:
         return drift_result.has_drift, changed
 
     def sync_context(self) -> dict:
-        """Re-capture context state (sync after drift).
+        """Re-capture context state (sync after drift, thread-safe).
 
         Returns:
             Updated context state dictionary
         """
-        return self.capture_context()
+        with self._lock:
+            return self.capture_context()
 
     def get_context_drift_details(self) -> Optional[dict]:
         """Get detailed drift information.

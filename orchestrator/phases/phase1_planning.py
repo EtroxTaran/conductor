@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import BasePhase
+from ..utils.validation import ProductSpecValidator
 
 
 class PlanningPhase(BasePhase):
@@ -31,6 +32,26 @@ class PlanningPhase(BasePhase):
                 "success": False,
                 "error": "PRODUCT.md not found. Please create it with your feature specification.",
             }
+
+        # Validate product specification content
+        validator = ProductSpecValidator()
+        validation_result = validator.validate(product_spec)
+
+        if not validation_result.valid:
+            error_msg = "PRODUCT.md validation failed:\n" + "\n".join(
+                f"  - {e}" for e in validation_result.errors
+            )
+            self.logger.error(error_msg, phase=1)
+            return {
+                "success": False,
+                "error": error_msg,
+                "validation_errors": validation_result.errors,
+            }
+
+        # Log warnings but continue
+        if validation_result.warnings:
+            for warning in validation_result.warnings:
+                self.logger.warning(f"PRODUCT.md: {warning}", phase=1)
 
         self.logger.info("Reading product specification", phase=1)
         self.logger.agent_start("claude", "Creating implementation plan", phase=1)

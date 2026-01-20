@@ -19,6 +19,14 @@ from .conflict_resolution import (
     ConflictResolution,
     ConflictResult,
 )
+from .validation import (
+    ProductSpecValidator,
+    AgentFeedbackSchema,
+    AssessmentType,
+    FeedbackItem,
+    ValidationResult,
+    validate_feedback,
+)
 
 __all__ = [
     # State management
@@ -47,4 +55,11 @@ __all__ = [
     "Conflict",
     "ConflictResolution",
     "ConflictResult",
+    # Validation
+    "ProductSpecValidator",
+    "AgentFeedbackSchema",
+    "AssessmentType",
+    "FeedbackItem",
+    "ValidationResult",
+    "validate_feedback",
 ]

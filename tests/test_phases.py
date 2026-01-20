@@ -27,9 +27,8 @@ class TestPlanningPhase:
         assert result["success"] is False
         assert "PRODUCT.md not found" in result["error"]
 
-    @patch.object(PlanningPhase, "claude")
     def test_execute_success(
-        self, mock_claude, temp_project_dir, state_manager, logger, mock_claude_agent
+        self, temp_project_dir, state_manager, logger, mock_claude_agent
     ):
         """Test successful planning execution."""
         # Setup mock
@@ -41,9 +40,9 @@ class TestPlanningPhase:
             "test_strategy": {},
             "estimated_complexity": "low",
         }
-        mock_claude.run_planning = mock_claude_agent.run_planning
 
         phase = PlanningPhase(temp_project_dir, state_manager, logger)
+        # Override the claude agent instance
         phase.claude = mock_claude_agent
 
         result = phase.execute()

@@ -3,12 +3,17 @@
 import json
 import concurrent.futures
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from .base import BasePhase
 from ..agents.base import AgentResult
 from ..utils.approval import ApprovalEngine, ApprovalConfig, ApprovalPolicy
 from ..utils.conflict_resolution import ConflictResolver, ResolutionStrategy
+
+# Default timeout for parallel verification (5 minutes)
+PARALLEL_VERIFICATION_TIMEOUT = 300
+# Timeout for individual future result retrieval
+FUTURE_RESULT_TIMEOUT = 30
 
 
 class VerificationPhase(BasePhase):
@@ -75,17 +80,10 @@ class VerificationPhase(BasePhase):
 
         self.logger.info("Starting parallel verification", phase=4)
 
-        # Run reviewers in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            cursor_future = executor.submit(
-                self._run_cursor_review, files_changed, test_results
-            )
-            gemini_future = executor.submit(
-                self._run_gemini_review, files_changed, plan
-            )
-
-            cursor_result = cursor_future.result()
-            gemini_result = gemini_future.result()
+        # Run reviewers in parallel with proper exception handling
+        cursor_result, gemini_result = self._run_parallel_verification(
+            files_changed, test_results, plan
+        )
 
         # Process results
         cursor_review = self._process_result("cursor", cursor_result)
@@ -161,6 +159,95 @@ class VerificationPhase(BasePhase):
             "conflict_result": conflict_result.to_dict() if conflict_result.has_conflicts else None,
             "verification_file": str(self.phase_dir / "verification-results.json"),
         }
+
+    def _run_parallel_verification(
+        self,
+        files_changed: list[str],
+        test_results: dict,
+        plan: dict,
+    ) -> Tuple[AgentResult, AgentResult]:
+        """Run reviewers in parallel with proper exception handling.
+
+        Uses concurrent.futures.as_completed() to handle timeouts and exceptions
+        gracefully, ensuring that if one agent fails, the other's results are preserved.
+
+        Args:
+            files_changed: List of changed files to review
+            test_results: Test results from implementation phase
+            plan: The implementation plan
+
+        Returns:
+            Tuple of (cursor_result, gemini_result)
+        """
+        cursor_result = None
+        gemini_result = None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_agent = {
+                executor.submit(
+                    self._run_cursor_review, files_changed, test_results
+                ): "cursor",
+                executor.submit(
+                    self._run_gemini_review, files_changed, plan
+                ): "gemini",
+            }
+
+            try:
+                for future in concurrent.futures.as_completed(
+                    future_to_agent, timeout=PARALLEL_VERIFICATION_TIMEOUT
+                ):
+                    agent = future_to_agent[future]
+                    try:
+                        result = future.result(timeout=FUTURE_RESULT_TIMEOUT)
+                        if agent == "cursor":
+                            cursor_result = result
+                        else:
+                            gemini_result = result
+                    except concurrent.futures.TimeoutError:
+                        self.logger.error(f"{agent} review timed out", phase=4)
+                        error_result = AgentResult(
+                            success=False,
+                            error=f"Review timed out after {FUTURE_RESULT_TIMEOUT} seconds"
+                        )
+                        if agent == "cursor":
+                            cursor_result = error_result
+                        else:
+                            gemini_result = error_result
+                    except Exception as e:
+                        self.logger.error(f"{agent} review failed: {e}", phase=4)
+                        error_result = AgentResult(
+                            success=False,
+                            error=f"Review failed: {str(e)}"
+                        )
+                        if agent == "cursor":
+                            cursor_result = error_result
+                        else:
+                            gemini_result = error_result
+
+            except concurrent.futures.TimeoutError:
+                self.logger.error(
+                    f"Parallel verification timed out after {PARALLEL_VERIFICATION_TIMEOUT}s",
+                    phase=4
+                )
+                # Ensure we have results for any agents that didn't complete
+                if cursor_result is None:
+                    cursor_result = AgentResult(
+                        success=False,
+                        error=f"Review timed out (global timeout: {PARALLEL_VERIFICATION_TIMEOUT}s)"
+                    )
+                if gemini_result is None:
+                    gemini_result = AgentResult(
+                        success=False,
+                        error=f"Review timed out (global timeout: {PARALLEL_VERIFICATION_TIMEOUT}s)"
+                    )
+
+        # Ensure we always return valid results
+        if cursor_result is None:
+            cursor_result = AgentResult(success=False, error="No result received from cursor")
+        if gemini_result is None:
+            gemini_result = AgentResult(success=False, error="No result received from gemini")
+
+        return cursor_result, gemini_result
 
     def _run_cursor_review(
         self,
