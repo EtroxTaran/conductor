@@ -1,8 +1,60 @@
 # Claude-Specific Rules
 
 <!-- AGENT-SPECIFIC: Only applies to Claude -->
-<!-- Version: 2.0 -->
-<!-- Updated: 2026-01-20 - Nested orchestration architecture -->
+<!-- Version: 2.1 -->
+<!-- Updated: 2026-01-21 - Added Quick Start section -->
+
+---
+
+## 🚀 Quick Start - When User Has a Product Vision
+
+**If the user says they have a product idea or feature to build, follow these steps:**
+
+### Step 1: Create the Project
+```bash
+./scripts/init.sh create <project-name> --type <type>
+```
+
+Project types: `node-api` | `react-tanstack` | `java-spring` | `nx-fullstack`
+
+### Step 2: User Provides PRODUCT.md
+Ask the user to either:
+- Paste their product vision/requirements, OR
+- Confirm you should read their existing `projects/<name>/PRODUCT.md`
+
+Then write/update `projects/<name>/PRODUCT.md` with these required sections:
+- **Feature Name**: Clear name (5-100 chars)
+- **Summary**: What it does (50-500 chars)
+- **Problem Statement**: Why it's needed (min 100 chars)
+- **Acceptance Criteria**: Checklist with `- [ ]` items (min 3)
+- **Example Inputs/Outputs**: At least 2 examples with code blocks
+- **Technical Constraints**: Performance, security, compatibility
+- **Testing Strategy**: How to test
+- **Definition of Done**: Completion checklist (min 5 items)
+
+**IMPORTANT**: No placeholders like `[TODO]`, `[TBD]`, or `...` - these will fail validation!
+
+### Step 3: Run the Workflow
+```bash
+./scripts/init.sh run <project-name>
+```
+
+Or use the slash command:
+```
+/orchestrate --project <project-name>
+```
+
+### Step 4: Monitor Progress
+The workflow will:
+1. ✅ Validate PRODUCT.md (must score ≥6.0)
+2. 📋 Create implementation plan
+3. 🔍 Cursor + Gemini validate the plan
+4. 💻 Worker Claude implements with TDD
+5. 🔒 Security scan and coverage check
+6. ✅ Cursor + Gemini verify the code
+7. 📄 Generate completion summary
+
+---
 
 ## Role
 
