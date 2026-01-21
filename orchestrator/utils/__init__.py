@@ -27,6 +27,35 @@ from .validation import (
     ValidationResult,
     validate_feedback,
 )
+from .action_log import (
+    ActionLog,
+    ActionEntry,
+    ActionType,
+    ActionStatus,
+    ErrorInfo,
+    get_action_log,
+    reset_action_log,
+)
+from .error_aggregator import (
+    ErrorAggregator,
+    AggregatedError,
+    ErrorSource,
+    ErrorSeverity,
+    get_error_aggregator,
+    reset_error_aggregator,
+)
+from .log_manager import (
+    LogManager,
+    LogRotationConfig,
+    CleanupResult,
+    load_config as load_log_config,
+    should_auto_cleanup,
+)
+from .handoff import (
+    HandoffBrief,
+    HandoffGenerator,
+    generate_handoff,
+)
 
 __all__ = [
     # State management
@@ -62,4 +91,29 @@ __all__ = [
     "FeedbackItem",
     "ValidationResult",
     "validate_feedback",
+    # Action log (observability)
+    "ActionLog",
+    "ActionEntry",
+    "ActionType",
+    "ActionStatus",
+    "ErrorInfo",
+    "get_action_log",
+    "reset_action_log",
+    # Error aggregator
+    "ErrorAggregator",
+    "AggregatedError",
+    "ErrorSource",
+    "ErrorSeverity",
+    "get_error_aggregator",
+    "reset_error_aggregator",
+    # Log manager
+    "LogManager",
+    "LogRotationConfig",
+    "CleanupResult",
+    "load_log_config",
+    "should_auto_cleanup",
+    # Handoff
+    "HandoffBrief",
+    "HandoffGenerator",
+    "generate_handoff",
 ]

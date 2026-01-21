@@ -23,6 +23,10 @@ from .ralph_loop import (
     detect_test_framework,
     COMPLETION_PROMISE,
 )
+from .action_logging import (
+    NodeActionLogger,
+    get_node_logger,
+)
 
 __all__ = [
     "LangGraphApprovalAdapter",
@@ -43,4 +47,7 @@ __all__ = [
     "run_ralph_loop",
     "detect_test_framework",
     "COMPLETION_PROMISE",
+    # Action logging integration
+    "NodeActionLogger",
+    "get_node_logger",
 ]

@@ -7,7 +7,10 @@ with parallel fan-out/fan-in, checkpoints, and human-in-the-loop.
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..ui.callbacks import ProgressCallback
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -524,12 +527,14 @@ class WorkflowRunner:
         self,
         initial_state: Optional[WorkflowState] = None,
         config: Optional[dict] = None,
+        progress_callback: Optional["ProgressCallback"] = None,
     ) -> dict[str, Any]:
         """Run the workflow from the beginning.
 
         Args:
             initial_state: Optional initial state (creates default if not provided)
             config: Optional LangGraph config
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Final workflow state
@@ -550,21 +555,82 @@ class WorkflowRunner:
 
         logger.info(f"Starting workflow for project: {self.project_name}")
 
-        result = await self.graph.ainvoke(initial_state, config=run_config)
+        if progress_callback:
+            # Use streaming to capture node events
+            result = await self._run_with_callbacks(
+                initial_state, run_config, progress_callback
+            )
+        else:
+            result = await self.graph.ainvoke(initial_state, config=run_config)
 
         logger.info(f"Workflow completed for project: {self.project_name}")
         return result
+
+    async def _run_with_callbacks(
+        self,
+        initial_state: WorkflowState,
+        run_config: dict,
+        callback: "ProgressCallback",
+    ) -> dict[str, Any]:
+        """Run workflow with progress callbacks using event streaming.
+
+        Args:
+            initial_state: Initial workflow state
+            run_config: LangGraph run configuration
+            callback: Progress callback handler
+
+        Returns:
+            Final workflow state
+        """
+        result = None
+        current_node = None
+
+        # Use astream_events for detailed event tracking
+        async for event in self.graph.astream_events(
+            initial_state,
+            config=run_config,
+            version="v2",
+        ):
+            event_type = event.get("event")
+            event_name = event.get("name", "")
+
+            if event_type == "on_chain_start":
+                # Node starting
+                if event_name and event_name != "LangGraph":
+                    current_node = event_name
+                    state = event.get("data", {}).get("input", {})
+                    if isinstance(state, dict):
+                        try:
+                            callback.on_node_start(event_name, state)
+                        except Exception as e:
+                            logger.warning(f"Callback error on_node_start: {e}")
+
+            elif event_type == "on_chain_end":
+                # Node completed
+                if event_name and event_name != "LangGraph":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        result = output
+                        try:
+                            callback.on_node_end(event_name, output)
+                        except Exception as e:
+                            logger.warning(f"Callback error on_node_end: {e}")
+                    current_node = None
+
+        return result or initial_state
 
     async def resume(
         self,
         human_response: Optional[dict] = None,
         config: Optional[dict] = None,
+        progress_callback: Optional["ProgressCallback"] = None,
     ) -> dict[str, Any]:
         """Resume the workflow from the last checkpoint.
 
         Args:
             human_response: Optional response for human escalation
             config: Optional LangGraph config
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Final workflow state
@@ -585,25 +651,69 @@ class WorkflowRunner:
         if state_snapshot.next:
             # Workflow is paused (likely at human escalation)
             # Use Command(resume=...) to resume from interrupt
-            # See: https://langchain-ai.github.io/langgraph/how-tos/human_in_the_loop/add-human-in-the-loop/
-            if human_response:
-                # Resume with human response using Command primitive
-                result = await self.graph.ainvoke(
-                    Command(resume=human_response),
-                    config=run_config,
+            resume_input = human_response if human_response else {"action": "abort"}
+            command = Command(resume=resume_input)
+
+            if progress_callback:
+                # Use streaming to capture node events
+                result = await self._resume_with_callbacks(
+                    command, run_config, progress_callback
                 )
             else:
-                # Resume with default response (abort)
-                result = await self.graph.ainvoke(
-                    Command(resume={"action": "abort"}),
-                    config=run_config,
-                )
+                result = await self.graph.ainvoke(command, config=run_config)
         else:
             # No pending work, workflow already complete
             logger.info("Workflow already complete, nothing to resume")
             result = state_snapshot.values
 
         return result
+
+    async def _resume_with_callbacks(
+        self,
+        command: Command,
+        run_config: dict,
+        callback: "ProgressCallback",
+    ) -> dict[str, Any]:
+        """Resume workflow with progress callbacks using event streaming.
+
+        Args:
+            command: LangGraph Command for resuming
+            run_config: LangGraph run configuration
+            callback: Progress callback handler
+
+        Returns:
+            Final workflow state
+        """
+        result = None
+
+        async for event in self.graph.astream_events(
+            command,
+            config=run_config,
+            version="v2",
+        ):
+            event_type = event.get("event")
+            event_name = event.get("name", "")
+
+            if event_type == "on_chain_start":
+                if event_name and event_name != "LangGraph":
+                    state = event.get("data", {}).get("input", {})
+                    if isinstance(state, dict):
+                        try:
+                            callback.on_node_start(event_name, state)
+                        except Exception as e:
+                            logger.warning(f"Callback error on_node_start: {e}")
+
+            elif event_type == "on_chain_end":
+                if event_name and event_name != "LangGraph":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        result = output
+                        try:
+                            callback.on_node_end(event_name, output)
+                        except Exception as e:
+                            logger.warning(f"Callback error on_node_end: {e}")
+
+        return result or {}
 
     async def get_state(self) -> Optional[WorkflowState]:
         """Get the current workflow state.

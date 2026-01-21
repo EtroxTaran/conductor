@@ -92,6 +92,7 @@ class OrchestrationLogger:
 
     Thread-safe logging with automatic secrets redaction.
     Outputs to console, plain text file, and JSON lines file.
+    Optionally forwards events to a Rich UI display.
     """
 
     def __init__(
@@ -116,7 +117,23 @@ class OrchestrationLogger:
         self.min_level = min_level
         self._log_lock = threading.Lock()
         self._redactor = SecretsRedactor() if redact_secrets else None
+        self._ui_display = None  # Optional Rich UI display
         self._ensure_log_dir()
+
+    def set_ui_display(self, display) -> None:
+        """Set a UI display to forward log events to.
+
+        When set, log events will be forwarded to the display's
+        log_event method in addition to normal logging.
+
+        Args:
+            display: Display object with log_event(message, level) method
+        """
+        self._ui_display = display
+
+    def clear_ui_display(self) -> None:
+        """Clear the UI display reference."""
+        self._ui_display = None
 
     def _ensure_log_dir(self) -> None:
         """Ensure log directory exists."""
@@ -253,6 +270,37 @@ class OrchestrationLogger:
             with open(self.json_log_file, "a", encoding="utf-8") as f:
                 entry = self._format_json(level, message, phase, agent, extra)
                 f.write(json.dumps(entry) + "\n")
+
+            # Forward to UI display if set
+            if self._ui_display:
+                try:
+                    ui_level = self._map_level_to_ui(level)
+                    display_message = message
+                    if agent:
+                        display_message = f"[{agent}] {message}"
+                    self._ui_display.log_event(display_message, ui_level)
+                except Exception:
+                    pass  # Don't let UI errors affect logging
+
+    def _map_level_to_ui(self, level: LogLevel) -> str:
+        """Map internal log level to UI display level.
+
+        Args:
+            level: Internal log level
+
+        Returns:
+            UI level string (info, warning, error, success)
+        """
+        mapping = {
+            LogLevel.DEBUG: "info",
+            LogLevel.INFO: "info",
+            LogLevel.WARNING: "warning",
+            LogLevel.ERROR: "error",
+            LogLevel.SUCCESS: "success",
+            LogLevel.PHASE: "info",
+            LogLevel.AGENT: "info",
+        }
+        return mapping.get(level, "info")
 
     def _redact_dict(self, data: dict) -> dict:
         """Recursively redact secrets from a dictionary."""

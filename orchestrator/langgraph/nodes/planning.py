@@ -6,11 +6,13 @@ using Claude.
 
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..state import WorkflowState, PhaseStatus, PhaseState
+from ..integrations.action_logging import get_node_logger
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,11 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
     logger.info(f"Starting planning phase for: {state['project_name']}")
 
     project_dir = Path(state["project_dir"])
+    action_logger = get_node_logger(project_dir)
+    start_time = time.time()
+
+    # Log phase start
+    action_logger.log_phase_start(1, "Planning")
 
     # Update phase status
     phase_status = state.get("phase_status", {}).copy()
@@ -82,6 +89,7 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
     # Read PRODUCT.md
     product_file = project_dir / "PRODUCT.md"
     if not product_file.exists():
+        action_logger.log_error("PRODUCT.md not found", phase=1)
         return {
             "phase_status": phase_status,
             "errors": [{
@@ -101,6 +109,8 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
 
     # Try SDK first, fall back to CLI
     from ...sdk import ClaudeSDKAgent, AgentFactory, AgentType
+
+    action_logger.log_agent_invoke("claude", "Generating implementation plan", phase=1)
 
     try:
         factory = AgentFactory(project_dir=project_dir)
@@ -133,6 +143,19 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
 
         logger.info(f"Plan generated: {plan.get('plan_name', 'Unknown')}")
 
+        # Calculate duration
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Log success
+        action_logger.log_agent_complete(
+            "claude",
+            f"Plan generated: {plan.get('plan_name', 'Unknown')}",
+            phase=1,
+            duration_ms=duration_ms,
+            details={"plan_name": plan.get("plan_name")},
+        )
+        action_logger.log_phase_complete(1, "Planning", duration_ms=duration_ms)
+
         # Update phase status
         phase_1.status = PhaseStatus.COMPLETED
         phase_1.completed_at = datetime.now().isoformat()
@@ -150,12 +173,16 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Planning failed: {e}")
 
+        # Log error
+        action_logger.log_agent_error("claude", str(e), phase=1, exception=e)
+
         phase_1.status = PhaseStatus.FAILED
         phase_1.error = str(e)
         phase_status["1"] = phase_1
 
         # Check if we can retry
         if phase_1.attempts < phase_1.max_attempts:
+            action_logger.log_phase_retry(1, phase_1.attempts + 1, phase_1.max_attempts)
             return {
                 "phase_status": phase_status,
                 "next_decision": "retry",
@@ -168,6 +195,8 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
                 }],
             }
         else:
+            action_logger.log_phase_failed(1, "Planning", str(e))
+            action_logger.log_escalation(f"Planning failed after {phase_1.attempts} attempts", phase=1)
             return {
                 "phase_status": phase_status,
                 "next_decision": "escalate",

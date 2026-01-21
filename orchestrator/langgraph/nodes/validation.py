@@ -6,11 +6,13 @@ results are merged in the fan-in node.
 
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..state import WorkflowState, PhaseStatus, PhaseState, AgentFeedback
+from ..integrations.action_logging import get_node_logger
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,11 @@ async def cursor_validate_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Cursor validating plan...")
 
     project_dir = Path(state["project_dir"])
+    action_logger = get_node_logger(project_dir)
+    start_time = time.time()
+
+    action_logger.log_agent_invoke("cursor", "Validating plan for code quality", phase=2)
+
     plan = state.get("plan", {})
 
     if not plan:
@@ -200,7 +207,25 @@ async def cursor_validate_node(state: WorkflowState) -> dict[str, Any]:
         feedback_file = feedback_dir / "cursor_feedback.json"
         feedback_file.write_text(json.dumps(feedback.to_dict(), indent=2))
 
+        duration_ms = (time.time() - start_time) * 1000
         logger.info(f"Cursor validation: {feedback.assessment}, score: {feedback.score}")
+
+        # Log validation result
+        if feedback.approved:
+            action_logger.log_validation_pass("cursor", feedback.score, phase=2)
+        else:
+            action_logger.log_validation_fail(
+                "cursor", feedback.score,
+                feedback.summary or "Score below threshold", phase=2
+            )
+
+        action_logger.log_agent_complete(
+            "cursor",
+            f"Validation: {feedback.assessment} (score: {feedback.score:.1f})",
+            phase=2,
+            duration_ms=duration_ms,
+            details={"score": feedback.score, "assessment": feedback.assessment},
+        )
 
         return {
             "validation_feedback": {"cursor": feedback},
@@ -209,6 +234,7 @@ async def cursor_validate_node(state: WorkflowState) -> dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Cursor validation failed: {e}")
+        action_logger.log_agent_error("cursor", str(e), phase=2, exception=e)
         return {
             "validation_feedback": {
                 "cursor": AgentFeedback(
@@ -240,6 +266,11 @@ async def gemini_validate_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Gemini validating plan...")
 
     project_dir = Path(state["project_dir"])
+    action_logger = get_node_logger(project_dir)
+    start_time = time.time()
+
+    action_logger.log_agent_invoke("gemini", "Validating plan architecture", phase=2)
+
     plan = state.get("plan", {})
 
     if not plan:
@@ -300,7 +331,25 @@ async def gemini_validate_node(state: WorkflowState) -> dict[str, Any]:
         feedback_file = feedback_dir / "gemini_feedback.json"
         feedback_file.write_text(json.dumps(feedback.to_dict(), indent=2))
 
+        duration_ms = (time.time() - start_time) * 1000
         logger.info(f"Gemini validation: {feedback.assessment}, score: {feedback.score}")
+
+        # Log validation result
+        if feedback.approved:
+            action_logger.log_validation_pass("gemini", feedback.score, phase=2)
+        else:
+            action_logger.log_validation_fail(
+                "gemini", feedback.score,
+                feedback.summary or "Score below threshold", phase=2
+            )
+
+        action_logger.log_agent_complete(
+            "gemini",
+            f"Validation: {feedback.assessment} (score: {feedback.score:.1f})",
+            phase=2,
+            duration_ms=duration_ms,
+            details={"score": feedback.score, "assessment": feedback.assessment},
+        )
 
         return {
             "validation_feedback": {"gemini": feedback},
@@ -309,6 +358,7 @@ async def gemini_validate_node(state: WorkflowState) -> dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Gemini validation failed: {e}")
+        action_logger.log_agent_error("gemini", str(e), phase=2, exception=e)
         return {
             "validation_feedback": {
                 "gemini": AgentFeedback(
@@ -343,6 +393,10 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Merging validation results...")
 
     project_dir = Path(state["project_dir"])
+    action_logger = get_node_logger(project_dir)
+
+    action_logger.log_info("Merging validation results", phase=2)
+
     feedback = state.get("validation_feedback", {})
 
     cursor_feedback = feedback.get("cursor")
@@ -427,6 +481,9 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
         phase_2.completed_at = datetime.now().isoformat()
         phase_status["2"] = phase_2
 
+        action_logger.log_phase_complete(2, "Validation")
+        action_logger.log_info(f"Validation approved with combined score {combined_score:.1f}", phase=2)
+
         return {
             "phase_status": phase_status,
             "current_phase": 3,
@@ -440,6 +497,12 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
             phase_2.blockers = blocking_issues
             phase_status["2"] = phase_2
 
+            action_logger.log_phase_retry(2, phase_2.attempts + 1, phase_2.max_attempts)
+            action_logger.log_warning(
+                f"Validation needs changes (score: {combined_score:.1f}, blocking issues: {len(blocking_issues)})",
+                phase=2
+            )
+
             return {
                 "phase_status": phase_status,
                 "current_phase": 1,  # Go back to planning
@@ -450,6 +513,9 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
             phase_2.status = PhaseStatus.FAILED
             phase_2.error = f"Validation failed after {phase_2.attempts} attempts"
             phase_status["2"] = phase_2
+
+            action_logger.log_phase_failed(2, "Validation", f"Failed after {phase_2.attempts} attempts")
+            action_logger.log_escalation("Validation failed - max retries exceeded", phase=2)
 
             return {
                 "phase_status": phase_status,

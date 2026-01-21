@@ -10,6 +10,7 @@ Supports two execution modes:
 
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -19,6 +20,8 @@ from typing import Optional
 from .utils.state import StateManager, PhaseStatus
 from .utils.logging import OrchestrationLogger, LogLevel
 from .utils.git_operations import GitOperationsManager
+from .utils.log_manager import LogManager, load_config as load_log_config, should_auto_cleanup
+from .utils.handoff import HandoffGenerator, generate_handoff
 from .project_manager import ProjectManager
 from .phases import (
     PlanningPhase,
@@ -27,6 +30,7 @@ from .phases import (
     VerificationPhase,
     CompletionPhase,
 )
+from .ui import create_display, UICallbackHandler
 
 
 def is_langgraph_enabled() -> bool:
@@ -469,11 +473,14 @@ class Orchestrator:
             "total_commits": len(state.git_commits),
         }
 
-    async def run_langgraph(self) -> dict:
+    async def run_langgraph(self, use_rich_display: bool = True) -> dict:
         """Run the workflow using LangGraph.
 
         Uses the LangGraph workflow graph for graph-based execution
         with native parallelism and checkpointing.
+
+        Args:
+            use_rich_display: Whether to use Rich live display (default True)
 
         Returns:
             Dictionary with workflow results
@@ -500,12 +507,31 @@ class Orchestrator:
         self.logger.info(f"Checkpoint directory: {runner.checkpoint_dir}")
         self.logger.separator()
 
+        # Create display and callback
+        display = create_display(self.project_dir.name) if use_rich_display else None
+        callback = UICallbackHandler(display) if display else None
+
         try:
-            # Run the workflow
-            result = await runner.run()
+            if display:
+                # Run with Rich live display
+                with display.start():
+                    display.log_event("Starting LangGraph workflow", "info")
+                    result = await runner.run(progress_callback=callback)
+
+                    # Show completion status
+                    success = self._check_workflow_success(result)
+                    if success:
+                        display.show_completion(True, "Workflow completed successfully!")
+                    elif result.get("next_decision") == "escalate":
+                        display.show_completion(False, "Workflow paused for human intervention")
+                    else:
+                        display.show_completion(False, "Workflow did not complete successfully")
+            else:
+                # Run without display
+                result = await runner.run()
 
             # Check result
-            if result.get("phase_status", {}).get("5", {}).status == "completed":
+            if self._check_workflow_success(result):
                 self.logger.banner("Workflow Complete!")
                 return {
                     "success": True,
@@ -532,17 +558,39 @@ class Orchestrator:
 
         except Exception as e:
             self.logger.error(f"LangGraph workflow failed: {e}")
+            if display:
+                display.show_completion(False, f"Workflow failed: {e}")
             return {
                 "success": False,
                 "mode": "langgraph",
                 "error": str(e),
             }
 
-    async def resume_langgraph(self, human_response: Optional[dict] = None) -> dict:
+    def _check_workflow_success(self, result: dict) -> bool:
+        """Check if workflow completed successfully.
+
+        Args:
+            result: Workflow result dictionary
+
+        Returns:
+            True if phase 5 is completed
+        """
+        phase_status = result.get("phase_status", {})
+        phase_5 = phase_status.get("5")
+        if phase_5 and hasattr(phase_5, "status"):
+            return phase_5.status.value == "completed" if hasattr(phase_5.status, "value") else phase_5.status == "completed"
+        return False
+
+    async def resume_langgraph(
+        self,
+        human_response: Optional[dict] = None,
+        use_rich_display: bool = True,
+    ) -> dict:
         """Resume the LangGraph workflow from checkpoint.
 
         Args:
             human_response: Optional response for human escalation
+            use_rich_display: Whether to use Rich live display (default True)
 
         Returns:
             Dictionary with workflow results
@@ -558,10 +606,31 @@ class Orchestrator:
         if pending:
             self.logger.info(f"Workflow paused at: {pending['paused_at']}")
 
-        try:
-            result = await runner.resume(human_response)
+        # Create display and callback
+        display = create_display(self.project_dir.name) if use_rich_display else None
+        callback = UICallbackHandler(display) if display else None
 
-            if result.get("phase_status", {}).get("5", {}).status == "completed":
+        try:
+            if display:
+                # Run with Rich live display
+                with display.start():
+                    display.log_event("Resuming LangGraph workflow", "info")
+                    result = await runner.resume(
+                        human_response=human_response,
+                        progress_callback=callback,
+                    )
+
+                    # Show completion status
+                    success = self._check_workflow_success(result)
+                    if success:
+                        display.show_completion(True, "Workflow completed successfully!")
+                    else:
+                        display.show_completion(False, "Workflow did not complete successfully")
+            else:
+                # Run without display
+                result = await runner.resume(human_response=human_response)
+
+            if self._check_workflow_success(result):
                 self.logger.banner("Workflow Complete!")
                 return {
                     "success": True,
@@ -577,6 +646,8 @@ class Orchestrator:
 
         except Exception as e:
             self.logger.error(f"LangGraph resume failed: {e}")
+            if display:
+                display.show_completion(False, f"Resume failed: {e}")
             return {
                 "success": False,
                 "mode": "langgraph",
@@ -793,6 +864,43 @@ Examples:
         help="Force legacy mode (sequential subprocess calls)",
     )
 
+    # Observability options
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Show enhanced status dashboard with recent actions and errors",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Show compact single-line status (use with --status or --dashboard)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output status as JSON (use with --status or --dashboard)",
+    )
+    parser.add_argument(
+        "--cleanup-logs",
+        action="store_true",
+        help="Clean up and rotate log files",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without doing it (use with --cleanup-logs)",
+    )
+    parser.add_argument(
+        "--handoff",
+        action="store_true",
+        help="Generate handoff brief for session resumption",
+    )
+    parser.add_argument(
+        "--log-stats",
+        action="store_true",
+        help="Show log file statistics",
+    )
+
     args = parser.parse_args()
 
     # Set LangGraph mode from flag
@@ -868,6 +976,99 @@ Examples:
         # Legacy mode: use current directory or --project-dir
         project_dir = Path(args.project_dir).resolve()
 
+    # Handle observability commands before creating full orchestrator
+    workflow_dir = project_dir / ".workflow"
+
+    # Dashboard command
+    if args.dashboard:
+        from .status import show_status
+        show_status(
+            project_dir,
+            compact=args.compact,
+            json_output=args.json,
+            use_colors=not args.quiet,
+        )
+        return
+
+    # Log cleanup command
+    if args.cleanup_logs:
+        config = load_log_config(workflow_dir)
+        log_manager = LogManager(workflow_dir, config)
+        result = log_manager.cleanup(dry_run=args.dry_run)
+
+        if args.dry_run:
+            print("\nDry run - would perform the following actions:")
+        else:
+            print("\nLog cleanup complete:")
+
+        if result.rotated_files:
+            print(f"\nRotated files ({len(result.rotated_files)}):")
+            for f in result.rotated_files:
+                print(f"  - {f}")
+
+        if result.archived_files:
+            print(f"\nArchived files ({len(result.archived_files)}):")
+            for f in result.archived_files:
+                print(f"  - {f}")
+
+        if result.deleted_files:
+            print(f"\nDeleted files ({len(result.deleted_files)}):")
+            for f in result.deleted_files:
+                print(f"  - {f}")
+
+        if result.freed_bytes > 0:
+            print(f"\nFreed space: {result.freed_bytes / (1024 * 1024):.2f} MB")
+
+        if result.errors:
+            print(f"\nErrors ({len(result.errors)}):")
+            for e in result.errors:
+                print(f"  - {e}")
+            sys.exit(1)
+
+        return
+
+    # Log stats command
+    if args.log_stats:
+        config = load_log_config(workflow_dir)
+        log_manager = LogManager(workflow_dir, config)
+        stats = log_manager.get_log_stats()
+
+        print("\nLog Statistics:")
+        print(f"  Total size: {stats['total_size_mb']} MB")
+        print(f"  Archive count: {stats['archive_count']}")
+
+        if stats['needs_rotation']:
+            print(f"\n  Files needing rotation:")
+            for f in stats['needs_rotation']:
+                print(f"    - {f}")
+
+        print("\n  File details:")
+        for name, info in stats['files'].items():
+            if info.get('exists'):
+                size = info.get('size_mb', 0)
+                age = info.get('age_days', 0)
+                count = info.get('file_count')
+                if count is not None:
+                    print(f"    {name}: {size} MB ({count} files)")
+                else:
+                    print(f"    {name}: {size} MB ({age:.1f} days old)")
+
+        return
+
+    # Handoff command
+    if args.handoff:
+        brief = generate_handoff(project_dir, save=True)
+
+        if args.json:
+            print(json.dumps(brief.to_dict(), indent=2))
+        else:
+            print(brief.to_markdown())
+            print(f"\nHandoff files saved to:")
+            print(f"  - {workflow_dir / 'handoff_brief.json'}")
+            print(f"  - {workflow_dir / 'handoff_brief.md'}")
+
+        return
+
     # Create orchestrator
     orchestrator = Orchestrator(
         project_dir=project_dir,
@@ -875,6 +1076,16 @@ Examples:
         auto_commit=not args.no_commit,
         log_level=log_level,
     )
+
+    # Auto-cleanup logs on start if enabled
+    if should_auto_cleanup(workflow_dir):
+        config = load_log_config(workflow_dir)
+        log_manager = LogManager(workflow_dir, config)
+        rotation_needed = log_manager.check_rotation_needed()
+        if any(rotation_needed.values()):
+            result = log_manager.rotate_if_needed()
+            if result.rotated_files and not args.quiet:
+                print(f"Auto-rotated {len(result.rotated_files)} log file(s)")
 
     # Check if using LangGraph mode
     use_langgraph = is_langgraph_enabled()

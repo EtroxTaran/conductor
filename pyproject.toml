@@ -50,6 +50,8 @@ dependencies = [
     "mcp>=1.0.0",
     # Utilities
     "tenacity>=9.0.0",
+    # Terminal UI
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
