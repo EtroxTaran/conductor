@@ -293,8 +293,8 @@ class TestLinearAdapterFactory:
 class TestMCPAvailability:
     """Test MCP availability detection."""
 
-    def test_mcp_not_available_by_default(self):
-        """Test MCP is not available without runtime context."""
+    def test_mcp_not_available_when_command_fails(self):
+        """Test MCP is detected as unavailable when command fails."""
         from orchestrator.langgraph.integrations.linear import (
             LinearAdapter,
             LinearConfig,
@@ -303,8 +303,29 @@ class TestMCPAvailability:
         config = LinearConfig(enabled=True, team_id="TEAM123")
         adapter = LinearAdapter(config)
 
-        # MCP requires runtime context we don't have in tests
-        assert adapter._check_mcp_available() is False
+        # Mock the MCP command to return None (simulating unavailable)
+        with patch.object(adapter, "_run_mcp_command", return_value=None):
+            # Reset cached availability
+            adapter._mcp_available = None
+            result = adapter._check_mcp_available()
+            assert result is False
+
+    def test_mcp_available_when_returns_teams(self):
+        """Test MCP is detected as available when it returns teams."""
+        from orchestrator.langgraph.integrations.linear import (
+            LinearAdapter,
+            LinearConfig,
+        )
+
+        config = LinearConfig(enabled=True, team_id="TEAM123")
+        adapter = LinearAdapter(config)
+
+        # Mock the MCP command to return valid response
+        with patch.object(adapter, "_run_mcp_command", return_value='{"teams": []}'):
+            # Reset cached availability
+            adapter._mcp_available = None
+            result = adapter._check_mcp_available()
+            assert result is True
 
 
 # =============================================================================
