@@ -58,6 +58,14 @@ def get_root_dir() -> Path:
     return script_dir.parent.resolve()
 
 
+def get_meta_architect_version() -> str:
+    """Read the current meta-architect version from VERSION file."""
+    version_file = get_root_dir() / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return "0.0.0"
+
+
 def prompt_project_type() -> str:
     """Interactive prompt for project type selection."""
     print("\nSelect project type:\n")
@@ -289,6 +297,7 @@ def create_project(
     create_type_specific_structure(project_dir, project_type)
 
     # Create .project-config.json
+    meta_version = get_meta_architect_version()
     config = {
         "project_name": name,
         "project_type": project_type,
@@ -297,6 +306,11 @@ def create_project(
         "created_at": datetime.now().isoformat(),
         "last_synced": datetime.now().isoformat(),
         "remote_url": remote_url,
+        "versioning": {
+            "meta_architect_version": meta_version,
+            "last_sync_version": meta_version,
+            "update_policy": "prompt"
+        },
         "overrides": {
             "claude": "project-overrides/claude.md",
             "gemini": "project-overrides/gemini.md",

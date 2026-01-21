@@ -25,6 +25,14 @@ def get_root_dir() -> Path:
     return script_dir.parent.resolve()
 
 
+def get_meta_architect_version() -> str:
+    """Read the current meta-architect version from VERSION file."""
+    version_file = get_root_dir() / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return "0.0.0"
+
+
 def load_project_config(project_dir: Path) -> Optional[dict]:
     """Load project configuration.
 
@@ -216,10 +224,21 @@ def sync_project(project_dir: Path, dry_run: bool = False) -> dict:
 
         results["files_updated"].append(str(output_path.relative_to(project_dir)))
 
-    # Update config with sync timestamp
+    # Update config with sync timestamp and version
     if not dry_run and results["files_updated"]:
+        current_version = get_meta_architect_version()
         config["last_synced"] = datetime.now().isoformat()
+
+        # Update versioning info
+        if "versioning" not in config:
+            config["versioning"] = {}
+        config["versioning"]["meta_architect_version"] = current_version
+        config["versioning"]["last_sync_version"] = current_version
+        if "update_policy" not in config["versioning"]:
+            config["versioning"]["update_policy"] = "prompt"
+
         save_project_config(project_dir, config)
+        results["synced_version"] = current_version
 
     results["success"] = len(results["errors"]) == 0
     return results
@@ -259,6 +278,7 @@ def show_status() -> None:
     """Show sync status for all projects."""
     root_dir = get_root_dir()
     projects_dir = root_dir / "projects"
+    current_version = get_meta_architect_version()
 
     if not projects_dir.exists():
         print("No projects directory found.")
@@ -271,6 +291,7 @@ def show_status() -> None:
         return
 
     print("Project Sync Status:")
+    print(f"Current meta-architect version: {current_version}")
     print("-" * 60)
 
     for project_dir in sorted(projects):
@@ -283,6 +304,10 @@ def show_status() -> None:
         template = config.get("template", "unknown")
         last_synced = config.get("last_synced", "never")
 
+        # Get version info
+        versioning = config.get("versioning", {})
+        project_version = versioning.get("last_sync_version", versioning.get("meta_architect_version", "unknown"))
+
         if last_synced != "never":
             last_synced = last_synced[:19].replace("T", " ")
 
@@ -293,12 +318,18 @@ def show_status() -> None:
             if override_content:
                 overrides.append(agent)
 
-        override_str = f" (overrides: {', '.join(overrides)})" if overrides else ""
+        # Check if needs update
+        needs_update = project_version != current_version and project_version != "unknown"
 
         print(f"  {project_name}:")
         print(f"    Template: {template}")
+        print(f"    Version: {project_version}")
+        if needs_update:
+            print(f"    Status: NEEDS UPDATE -> {current_version}")
+        else:
+            print(f"    Status: Up to date")
         print(f"    Last synced: {last_synced}")
-        if override_str:
+        if overrides:
             print(f"    Overrides: {', '.join(overrides)}")
         print()
 
@@ -361,15 +392,18 @@ Examples:
 
     # Print results
     success_count = 0
+    current_version = get_meta_architect_version()
+
     for result in results:
         project = result.get("project", "unknown")
         if result.get("success"):
             success_count += 1
             updated = result.get("files_updated", [])
-            unchanged = result.get("files_unchanged", [])
+            synced_version = result.get("synced_version", "")
 
             if updated:
-                print(f"[OK] {project}: {len(updated)} file(s) updated")
+                version_str = f" (v{synced_version})" if synced_version else ""
+                print(f"[OK] {project}: {len(updated)} file(s) updated{version_str}")
                 for f in updated:
                     print(f"     - {f}")
             else:

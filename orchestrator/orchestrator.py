@@ -864,6 +864,34 @@ Examples:
         help="Force legacy mode (sequential subprocess calls)",
     )
 
+    # Update management options
+    parser.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="Check for available updates to project",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Apply available updates to project",
+    )
+    parser.add_argument(
+        "--check-all-updates",
+        action="store_true",
+        help="Check updates for all projects",
+    )
+    parser.add_argument(
+        "--list-backups",
+        action="store_true",
+        help="List available backups for project",
+    )
+    parser.add_argument(
+        "--rollback-backup",
+        type=str,
+        metavar="BACKUP_ID",
+        help="Rollback project to specified backup",
+    )
+
     # Observability options
     parser.add_argument(
         "--dashboard",
@@ -963,6 +991,43 @@ Examples:
             sys.exit(1)
         return
 
+    # Handle update management commands
+    if args.check_all_updates:
+        from .update_manager import UpdateManager, format_update_check
+
+        manager = UpdateManager(root_dir)
+        projects_dir = manager.projects_dir
+
+        if not projects_dir.exists():
+            print("No projects directory found.")
+            return
+
+        projects = [d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+
+        if not projects:
+            print("No projects found.")
+            return
+
+        updates_count = 0
+        print("\n" + "=" * 60)
+        print("Project Update Status")
+        print("=" * 60)
+
+        for project_dir in sorted(projects):
+            update_info = manager.check_updates(project_dir.name)
+            if update_info.updates_available:
+                updates_count += 1
+                print(f"\n  {project_dir.name}")
+                print(f"    Current: {update_info.current_version} -> Latest: {update_info.latest_version}")
+                if update_info.is_breaking_update:
+                    print("    ⚠️  Breaking update!")
+            else:
+                print(f"\n  {project_dir.name}: Up to date ({update_info.current_version})")
+
+        print("\n" + "-" * 60)
+        print(f"Summary: {updates_count}/{len(projects)} projects need updates")
+        return
+
     # Determine project directory
     if args.project:
         project_dir = project_manager.get_project(args.project)
@@ -978,6 +1043,111 @@ Examples:
 
     # Handle observability commands before creating full orchestrator
     workflow_dir = project_dir / ".workflow"
+
+    # Handle update management commands for specific project
+    if args.check_updates:
+        from .update_manager import UpdateManager, format_update_check
+
+        manager = UpdateManager(root_dir)
+        project_name = args.project or project_dir.name
+        update_info = manager.check_updates(project_name)
+
+        if args.json:
+            print(json.dumps(update_info.to_dict(), indent=2))
+        else:
+            print(format_update_check(update_info))
+        return
+
+    if args.update:
+        from .update_manager import UpdateManager
+
+        manager = UpdateManager(root_dir)
+        project_name = args.project or project_dir.name
+
+        # Check if updates available first
+        update_info = manager.check_updates(project_name)
+        if not update_info.updates_available:
+            print(f"Project '{project_name}' is already up to date.")
+            return
+
+        # Warn about breaking updates
+        if update_info.is_breaking_update:
+            print(f"⚠️  Warning: This is a breaking update ({update_info.current_version} -> {update_info.latest_version})")
+            if not args.dry_run:
+                response = input("Continue? [y/N]: ").strip().lower()
+                if response != "y":
+                    print("Update cancelled.")
+                    return
+
+        # Apply updates
+        result = manager.apply_updates(project_name, dry_run=args.dry_run)
+
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            if args.dry_run:
+                print("\nDry run - would make the following changes:")
+            else:
+                print("\nUpdate result:")
+
+            if result.success:
+                print(f"  Status: {'Would update' if args.dry_run else 'Updated'}")
+                if result.backup_id:
+                    print(f"  Backup created: {result.backup_id}")
+                if result.files_updated:
+                    print("  Files updated:")
+                    for f in result.files_updated:
+                        print(f"    - {f}")
+            else:
+                print("  Status: Failed")
+                for error in result.errors:
+                    print(f"  Error: {error}")
+                sys.exit(1)
+        return
+
+    if args.list_backups:
+        from .update_manager import UpdateManager
+
+        manager = UpdateManager(root_dir)
+        project_name = args.project or project_dir.name
+        backups = manager.list_backups(project_name)
+
+        if args.json:
+            print(json.dumps(backups, indent=2))
+        else:
+            if not backups:
+                print(f"No backups found for project '{project_name}'")
+            else:
+                print(f"\nBackups for '{project_name}':")
+                print("-" * 50)
+                for backup in backups:
+                    print(f"\n  ID: {backup['backup_id']}")
+                    print(f"  Created: {backup['created_at']}")
+                    print(f"  Version: {backup.get('project_version', 'unknown')}")
+        return
+
+    if args.rollback_backup:
+        from .update_manager import UpdateManager
+
+        manager = UpdateManager(root_dir)
+        project_name = args.project or project_dir.name
+
+        result = manager.rollback(project_name, args.rollback_backup)
+
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            if result.success:
+                print(f"\n✅ Rollback successful!")
+                print(f"  Restored files:")
+                for f in result.files_updated:
+                    print(f"    - {f}")
+            else:
+                print(f"\n❌ Rollback failed")
+                for error in result.errors:
+                    print(f"  Error: {error}")
+                sys.exit(1)
+        return
 
     # Dashboard command
     if args.dashboard:

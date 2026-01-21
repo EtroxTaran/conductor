@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-agent-orchestrator"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Multi-Agent Orchestration System for coordinating AI coding agents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -73,6 +73,9 @@ Homepage = "https://github.com/example/multi-agent-orchestrator"
 Documentation = "https://github.com/example/multi-agent-orchestrator#readme"
 Repository = "https://github.com/example/multi-agent-orchestrator.git"
 Issues = "https://github.com/example/multi-agent-orchestrator/issues"
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -11,6 +11,29 @@
       "enum": ["base", "react-tanstack", "node-api", "java-spring", "nx-fullstack", "python"],
       "default": "base"
     },
+    "versioning": {
+      "type": "object",
+      "description": "Version tracking for updates",
+      "properties": {
+        "meta_architect_version": {
+          "type": "string",
+          "description": "Version of meta-architect when project was created or last synced",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "last_sync_version": {
+          "type": "string",
+          "description": "Version when templates were last synced",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "update_policy": {
+          "type": "string",
+          "description": "How to handle updates",
+          "enum": ["auto", "prompt", "manual"],
+          "default": "prompt"
+        }
+      },
+      "additionalProperties": false
+    },
     "validation": {
       "type": "object",
       "description": "Validation threshold settings",

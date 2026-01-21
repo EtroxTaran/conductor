@@ -1,8 +1,8 @@
 # Claude-Specific Rules
 
 <!-- AGENT-SPECIFIC: Only applies to Claude -->
-<!-- Version: 2.2 -->
-<!-- Updated: 2026-01-21 - Added Task-Based Execution, Ralph Wiggum Loop, Linear Integration -->
+<!-- Version: 2.3 -->
+<!-- Updated: 2026-01-21 - Added Project Update Mechanism with Versioning -->
 
 ---
 
@@ -175,6 +175,8 @@ Available workflow commands:
 - `/sync-projects` - Sync template updates to projects
 - `/phase-status --project <name>` - Show project workflow status
 - `/list-projects` - List all projects
+- `/check-updates --project <name>` - Check for available updates
+- `/update-project --project <name>` - Apply updates with backup
 
 ---
 
@@ -482,3 +484,106 @@ If Linear MCP is unavailable or not configured:
 - Workflow continues normally
 - No errors thrown
 - Tasks tracked in `.workflow/` only
+
+---
+
+## Project Update Mechanism
+
+Meta-architect includes a versioning and update system to keep projects in sync with the latest templates and features.
+
+### Version Tracking
+
+Each project tracks its meta-architect version in `.project-config.json`:
+
+```json
+{
+  "versioning": {
+    "meta_architect_version": "0.2.0",
+    "last_sync_version": "0.2.0",
+    "update_policy": "prompt"
+  }
+}
+```
+
+The current meta-architect version is stored in `VERSION` file at the repo root.
+
+### Checking for Updates
+
+```bash
+# Check updates for a specific project
+python -m orchestrator --project my-app --check-updates
+
+# Check updates for all projects
+python -m orchestrator --check-all-updates
+
+# Or use slash command
+/check-updates --project my-app
+```
+
+The check displays:
+- Current version vs latest version
+- Whether it's a breaking update (major version change)
+- Changelog entries since current version
+- Files that would be updated
+
+### Applying Updates
+
+```bash
+# Apply updates (creates automatic backup)
+python -m orchestrator --project my-app --update
+
+# Dry run (preview changes)
+python -m orchestrator --project my-app --update --dry-run
+
+# Or use slash command
+/update-project --project my-app
+```
+
+The update process:
+1. Creates backup in `.workflow/backups/<timestamp>/`
+2. Syncs templates from `project-templates/`
+3. Preserves project-overrides/
+4. Updates `.project-config.json` with new version
+
+### Backup and Rollback
+
+```bash
+# List available backups
+python -m orchestrator --project my-app --list-backups
+
+# Rollback to a specific backup
+python -m orchestrator --project my-app --rollback-backup 20260121_150000
+```
+
+### Update Policies
+
+Projects can configure how updates are handled:
+
+| Policy | Behavior |
+|--------|----------|
+| `auto` | Automatically apply non-breaking updates |
+| `prompt` | Show notification, require explicit command (default) |
+| `manual` | Never auto-check, user must explicitly run updates |
+
+### What Gets Updated
+
+| File | Updated | Notes |
+|------|---------|-------|
+| `CLAUDE.md` | Yes | Context rules from template |
+| `GEMINI.md` | Yes | Context rules from template |
+| `.cursor/rules` | Yes | Cursor context from template |
+| `PRODUCT.md` | **No** | User content preserved |
+| `.workflow/` | **No** | Workflow state preserved |
+| `src/`, `tests/` | **No** | Application code preserved |
+| `project-overrides/` | **No** | Custom overrides preserved |
+
+### CLI Quick Reference
+
+```bash
+# Update management
+python -m orchestrator --project <name> --check-updates
+python -m orchestrator --project <name> --update [--dry-run]
+python -m orchestrator --check-all-updates
+python -m orchestrator --project <name> --list-backups
+python -m orchestrator --project <name> --rollback-backup <id>
+```

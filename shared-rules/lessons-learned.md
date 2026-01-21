@@ -2,7 +2,7 @@
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.1 -->
+<!-- Version: 1.2 -->
 <!-- Last Updated: 2026-01-21 -->
 
 ## How to Add a Lesson
@@ -16,6 +16,35 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-21 - Project Update Mechanism with Versioning
+
+- **Issue**: Projects created from meta-architect needed a way to receive template updates without losing project-specific work
+- **Root Cause**: No version tracking; manual file copying required; no safe rollback mechanism
+- **Fix**: Implemented comprehensive update system:
+  - `VERSION` file at repo root with semantic versioning
+  - Project config tracks `meta_architect_version` and `last_sync_version`
+  - `/check-updates` command to compare versions and show changelog
+  - `/update-project` command with automatic backup before applying
+  - Rollback capability from `.workflow/backups/`
+  - Update policies: `auto`, `prompt`, `manual`
+- **Prevention**:
+  - Always check updates before major workflow runs
+  - Backup is created automatically; can rollback if issues
+  - CHANGELOG.md documents all changes between versions
+- **Applies To**: all
+- **Files Changed**:
+  - `VERSION` (new)
+  - `CHANGELOG.md` (new)
+  - `orchestrator/__version__.py` (new)
+  - `orchestrator/update_manager.py` (new)
+  - `orchestrator/orchestrator.py` (modified - CLI flags)
+  - `scripts/check-updates.py` (new)
+  - `scripts/create-project.py` (modified - version tracking)
+  - `scripts/sync-project-templates.py` (modified - version tracking)
+  - `schemas/project-config-schema.json` (modified - versioning section)
+  - `.claude/commands/check-updates.md` (new)
+  - `.claude/commands/update-project.md` (new)
 
 ### 2026-01-21 - Ralph Wiggum Loop for TDD Implementation
 
