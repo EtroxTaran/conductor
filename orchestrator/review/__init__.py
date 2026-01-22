@@ -8,8 +8,8 @@ from orchestrator.review.cycle import (
 )
 from orchestrator.review.resolver import (
     ConflictResolver,
-    ConflictResolution,
-    ReviewConflict,
+    ResolutionResult,
+    ReviewResult,
 )
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "ReviewDecision",
     "ReviewIteration",
     "ConflictResolver",
-    "ConflictResolution",
-    "ReviewConflict",
+    "ResolutionResult",
+    "ReviewResult",
 ]

@@ -13,117 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from ..state import WorkflowState, PhaseStatus, PhaseState, AgentFeedback
+from ...specialists.runner import SpecialistRunner
+from ...review.resolver import ConflictResolver
+from ...config import load_project_config
 
 logger = logging.getLogger(__name__)
 
-CURSOR_REVIEW_PROMPT = """You are a senior code reviewer performing a detailed code review.
-
-ORIGINAL PLAN:
-{plan}
-
-FILES IMPLEMENTED:
-{files_list}
-
-Review each file and provide feedback as JSON:
-{{
-    "reviewer": "cursor",
-    "approved": true|false,
-    "review_type": "code_review",
-    "files_reviewed": [
-        {{
-            "file": "path/to/file",
-            "status": "approved|needs_changes",
-            "issues": [
-                {{
-                    "line": 42,
-                    "severity": "error|warning|info",
-                    "type": "bug|security|style|performance",
-                    "description": "Issue description",
-                    "suggestion": "How to fix"
-                }}
-            ],
-            "positive_feedback": ["Good practices observed"]
-        }}
-    ],
-    "overall_code_quality": 1-10,
-    "test_coverage_assessment": "adequate|insufficient|excellent",
-    "security_assessment": "pass|fail|needs_review",
-    "blocking_issues": [
-        "List of issues that must be fixed before merge"
-    ],
-    "summary": "Overall review summary"
-}}
-
-Focus on:
-1. Code correctness and bug detection
-2. Security vulnerabilities (OWASP Top 10)
-3. Performance issues
-4. Code style and consistency
-5. Test quality and coverage"""
-
-
-GEMINI_REVIEW_PROMPT = """You are a senior software architect reviewing an implementation.
-
-ORIGINAL PLAN:
-{plan}
-
-FILES IMPLEMENTED:
-{files_list}
-
-Review the implementation from an architectural perspective and provide feedback as JSON:
-{{
-    "reviewer": "gemini",
-    "approved": true|false,
-    "review_type": "architecture_review",
-    "plan_adherence": {{
-        "followed_plan": true|false,
-        "deviations": [
-            {{
-                "planned": "What was planned",
-                "actual": "What was implemented",
-                "acceptable": true|false,
-                "reason": "Why deviation occurred"
-            }}
-        ]
-    }},
-    "architecture_assessment": {{
-        "patterns_used": ["Design patterns identified in code"],
-        "modularity_score": 1-10,
-        "coupling_assessment": "loose|moderate|tight",
-        "cohesion_assessment": "high|moderate|low",
-        "concerns": []
-    }},
-    "scalability_assessment": {{
-        "current_capacity": "Assessment of current design",
-        "bottlenecks": ["Potential bottlenecks"],
-        "recommendations": ["Scaling recommendations"]
-    }},
-    "technical_debt": {{
-        "items": [
-            {{
-                "description": "Technical debt item",
-                "severity": "high|medium|low",
-                "recommendation": "How to address"
-            }}
-        ],
-        "overall_health": "good|acceptable|concerning"
-    }},
-    "blocking_issues": [
-        "Architectural issues that must be addressed"
-    ],
-    "summary": "Overall architecture review summary"
-}}
-
-Focus on:
-1. Adherence to the original plan
-2. Code organization and modularity
-3. Design pattern usage
-4. Scalability potential
-5. Technical debt introduced"""
-
 
 async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
-    """Cursor reviews the implementation for code quality.
+    """Cursor reviews the implementation for code quality (A07-security-reviewer).
 
     Args:
         state: Current workflow state
@@ -137,6 +35,24 @@ async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
     plan = state.get("plan", {})
     impl_result = state.get("implementation_result", {})
 
+    if state.get("review_skipped"):
+        feedback = AgentFeedback(
+            agent="cursor",
+            approved=True,
+            score=10.0,
+            assessment="skipped",
+            concerns=[],
+            blocking_issues=[],
+            summary="Review skipped for docs-only changes.",
+        )
+        feedback_dir = project_dir / ".workflow" / "phases" / "verification"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        (feedback_dir / "cursor_review.json").write_text(json.dumps(feedback.to_dict(), indent=2))
+        return {
+            "verification_feedback": {"cursor": feedback},
+            "updated_at": datetime.now().isoformat(),
+        }
+
     # Get list of changed files
     files_changed = []
     if impl_result:
@@ -149,22 +65,26 @@ async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
 
     files_list = "\n".join(f"- {f}" for f in files_changed) if files_changed else "No files specified"
 
-    prompt = CURSOR_REVIEW_PROMPT.format(
-        plan=json.dumps(plan, indent=2),
-        files_list=files_list,
-    )
+    # Build prompt (instructions are in A07-security-reviewer/CURSOR-RULES.md)
+    prompt = f"""ORIGINAL PLAN:
+{json.dumps(plan, indent=2)}
+
+FILES IMPLEMENTED:
+{files_list}"""
 
     try:
-        from ...agents import CursorAgent
-
-        agent = CursorAgent(project_dir)
-        result = agent.run(prompt)
+        runner = SpecialistRunner(project_dir)
+        
+        # Run A07-security-reviewer
+        result = await asyncio.to_thread(
+            runner.create_agent("A07-security-reviewer").run,
+            prompt
+        )
 
         if not result.success:
             raise Exception(result.error or "Cursor review failed")
 
-        # Parse feedback - handle cursor-agent wrapper format
-        # cursor-agent returns: {"type":"result","result":"```json\n{...}\n```",...}
+        # Parse feedback
         feedback_data = {}
         raw_output = result.parsed_output or {}
 
@@ -197,20 +117,24 @@ async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
                 except json.JSONDecodeError:
                     pass
 
-        score = float(feedback_data.get("overall_code_quality", 0))
-        blocking = feedback_data.get("blocking_issues", [])
+        score = float(feedback_data.get("score", 0)) # A07 uses "score"
+        blocking = []
+        
+        # Parse findings from A07 format
+        findings = feedback_data.get("findings", [])
+        for finding in findings:
+            severity = finding.get("severity", "INFO")
+            if severity in ["CRITICAL", "HIGH"]:
+                blocking.append(f"[{severity}] {finding.get('file')}: {finding.get('description')}")
 
         feedback = AgentFeedback(
-            agent="cursor",
+            agent="cursor", # Kept as "cursor" for compatibility with state schema
             approved=feedback_data.get("approved", False) and len(blocking) == 0,
             score=score,
             assessment="approved" if feedback_data.get("approved") else "needs_changes",
-            concerns=[
-                issue for file_review in feedback_data.get("files_reviewed", [])
-                for issue in file_review.get("issues", [])
-            ],
+            concerns=findings,
             blocking_issues=blocking,
-            summary=feedback_data.get("summary", ""),
+            summary=f"Security review score: {score}. {len(blocking)} blocking issues.",
             raw_output=feedback_data,
         )
 
@@ -248,7 +172,7 @@ async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
 
 
 async def gemini_review_node(state: WorkflowState) -> dict[str, Any]:
-    """Gemini reviews the implementation for architecture.
+    """Gemini reviews the implementation for architecture (A08-code-reviewer).
 
     Args:
         state: Current workflow state
@@ -262,6 +186,46 @@ async def gemini_review_node(state: WorkflowState) -> dict[str, Any]:
     plan = state.get("plan", {})
     impl_result = state.get("implementation_result", {})
 
+    if state.get("review_skipped"):
+        feedback = AgentFeedback(
+            agent="gemini",
+            approved=True,
+            score=10.0,
+            assessment="skipped",
+            concerns=[],
+            blocking_issues=[],
+            summary="Review skipped for docs-only changes.",
+        )
+        feedback_dir = project_dir / ".workflow" / "phases" / "verification"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        (feedback_dir / "gemini_review.json").write_text(json.dumps(feedback.to_dict(), indent=2))
+        return {
+            "verification_feedback": {"gemini": feedback},
+            "updated_at": datetime.now().isoformat(),
+        }
+
+
+async def review_gate_node(state: WorkflowState) -> dict[str, Any]:
+    """Determine whether to skip reviews based on change risk."""
+    project_dir = Path(state["project_dir"])
+    config = load_project_config(project_dir)
+    policy = getattr(config.workflow, "review_gating", "conservative")
+
+    changed_files = await _collect_changed_files(state, project_dir)
+    docs_only = _is_docs_only_changes(changed_files)
+
+    skip_reviews = False
+    if policy == "conservative":
+        skip_reviews = bool(changed_files) and docs_only
+
+    return {
+        "review_skipped": skip_reviews,
+        "review_skipped_reason": "docs_only" if skip_reviews else None,
+        "review_changed_files": changed_files,
+        "next_decision": "continue",
+        "updated_at": datetime.now().isoformat(),
+    }
+
     # Get list of changed files
     files_changed = []
     if impl_result:
@@ -273,32 +237,26 @@ async def gemini_review_node(state: WorkflowState) -> dict[str, Any]:
 
     files_list = "\n".join(f"- {f}" for f in files_changed) if files_changed else "No files specified"
 
-    prompt = GEMINI_REVIEW_PROMPT.format(
-        plan=json.dumps(plan, indent=2),
-        files_list=files_list,
-    )
+    # Build prompt (instructions are in A08-code-reviewer/GEMINI.md)
+    prompt = f"""ORIGINAL PLAN:
+{json.dumps(plan, indent=2)}
+
+FILES IMPLEMENTED:
+{files_list}"""
 
     try:
-        # Use Gemini CLI for architecture review
-        cmd = ["gemini", "--yolo", prompt]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(project_dir),
+        runner = SpecialistRunner(project_dir)
+        
+        # Run A08-code-reviewer
+        result = await asyncio.to_thread(
+            runner.create_agent("A08-code-reviewer").run,
+            prompt
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=300,  # 5 minute timeout
-        )
+        if not result.success:
+            raise Exception(result.error or "Gemini review failed")
 
-        if process.returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            raise Exception(f"Gemini CLI failed: {error_msg}")
-
-        output = stdout.decode()
+        output = result.output
 
         # Parse feedback
         feedback_data = {}
@@ -309,16 +267,18 @@ async def gemini_review_node(state: WorkflowState) -> dict[str, Any]:
             if json_match:
                 feedback_data = json.loads(json_match.group(0))
 
-        arch_assessment = feedback_data.get("architecture_assessment", {})
-        score = float(arch_assessment.get("modularity_score", 0))
+        score = float(feedback_data.get("score", 0))
         blocking = feedback_data.get("blocking_issues", [])
+        
+        # A08 uses "comments" list
+        concerns = feedback_data.get("comments", [])
 
         feedback = AgentFeedback(
-            agent="gemini",
+            agent="gemini", # Kept as "gemini" for compatibility
             approved=feedback_data.get("approved", False) and len(blocking) == 0,
             score=score,
             assessment="approved" if feedback_data.get("approved") else "needs_changes",
-            concerns=arch_assessment.get("concerns", []),
+            concerns=concerns,
             blocking_issues=blocking,
             summary=feedback_data.get("summary", ""),
             raw_output=feedback_data,
@@ -401,44 +361,21 @@ async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
             "next_decision": "retry",
         }
 
-    # Both agents must approve
-    cursor_approved = cursor_feedback.approved if hasattr(cursor_feedback, "approved") else False
-    gemini_approved = gemini_feedback.approved if hasattr(gemini_feedback, "approved") else False
+    # Resolve conflicts using 4-Eyes Protocol
+    resolver = ConflictResolver()
+    result = resolver.resolve(cursor_feedback, gemini_feedback)
 
-    cursor_score = cursor_feedback.score if hasattr(cursor_feedback, "score") else 0
-    gemini_score = gemini_feedback.score if hasattr(gemini_feedback, "score") else 0
-    combined_score = (cursor_score * 0.5) + (gemini_score * 0.5)
-
-    # Collect all blocking issues
-    blocking_issues = []
-    if hasattr(cursor_feedback, "blocking_issues"):
-        blocking_issues.extend([
-            {"agent": "cursor", "issue": issue}
-            for issue in cursor_feedback.blocking_issues
-        ])
-    if hasattr(gemini_feedback, "blocking_issues"):
-        blocking_issues.extend([
-            {"agent": "gemini", "issue": issue}
-            for issue in gemini_feedback.blocking_issues
-        ])
-
-    # Verification threshold
-    MIN_SCORE = 7.0
-    approved = cursor_approved and gemini_approved and combined_score >= MIN_SCORE
-
-    logger.info(
-        f"Verification result: score={combined_score:.1f}, "
-        f"cursor={cursor_approved}, gemini={gemini_approved}, "
-        f"blocking={len(blocking_issues)}, approved={approved}"
-    )
+    logger.info(f"Verification resolution: {result.action.upper()} - {result.decision_reason}")
 
     # Save consolidated feedback
     consolidated = {
-        "combined_score": combined_score,
-        "cursor_approved": cursor_approved,
-        "gemini_approved": gemini_approved,
-        "approved": approved,
-        "blocking_issues": blocking_issues,
+        "combined_score": result.final_score,
+        "cursor_score": cursor_feedback.score if hasattr(cursor_feedback, "score") else 0,
+        "gemini_score": gemini_feedback.score if hasattr(gemini_feedback, "score") else 0,
+        "approved": result.approved,
+        "decision": result.action,
+        "reason": result.decision_reason,
+        "blocking_issues": result.blocking_issues,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -446,7 +383,7 @@ async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
     feedback_dir.mkdir(parents=True, exist_ok=True)
     (feedback_dir / "consolidated.json").write_text(json.dumps(consolidated, indent=2))
 
-    if approved:
+    if result.approved:
         phase_4.status = PhaseStatus.COMPLETED
         phase_4.completed_at = datetime.now().isoformat()
         phase_status["4"] = phase_4
@@ -457,14 +394,30 @@ async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
             "next_decision": "continue",
             "updated_at": datetime.now().isoformat(),
         }
+    elif result.action == "escalate":
+        # Explicit escalation requested by resolver
+        phase_4.status = PhaseStatus.FAILED
+        phase_4.error = f"Verification conflict escalated: {result.decision_reason}"
+        phase_status["4"] = phase_4
+
+        return {
+            "phase_status": phase_status,
+            "next_decision": "escalate",
+            "errors": [{
+                "type": "verification_conflict",
+                "message": result.decision_reason,
+                "timestamp": datetime.now().isoformat(),
+            }],
+        }
     else:
+        # Rejected - retry via Bug Fixer (or legacy implementation)
         if phase_4.attempts < phase_4.max_attempts:
-            phase_4.blockers = blocking_issues
+            phase_4.blockers = result.blocking_issues
             phase_status["4"] = phase_4
 
             return {
                 "phase_status": phase_status,
-                "current_phase": 3,  # Go back to implementation
+                "current_phase": 3,  # Go back to implementation/fix
                 "next_decision": "retry",
                 "updated_at": datetime.now().isoformat(),
             }
@@ -478,9 +431,9 @@ async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
                 "next_decision": "escalate",
                 "errors": [{
                     "type": "verification_failed",
-                    "combined_score": combined_score,
-                    "blocking_issues": blocking_issues,
-                    "message": "Code verification failed",
+                    "combined_score": result.final_score,
+                    "blocking_issues": result.blocking_issues,
+                    "message": f"Code verification failed: {result.decision_reason}",
                     "timestamp": datetime.now().isoformat(),
                 }],
             }
@@ -497,7 +450,27 @@ async def _get_changed_files(project_dir: Path) -> list[str]:
     """
     import subprocess
 
+    files = set()
+
     try:
+        # Uncommitted changes
+        result = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            files.update(f.strip() for f in result.stdout.split("\n") if f.strip())
+    except Exception:
+        pass
+
+    if files:
+        return sorted(files)
+
+    try:
+        # Last commit changes (useful for worktree merges)
         result = subprocess.run(
             ["git", "diff", "--name-only", "HEAD~1"],
             cwd=project_dir,
@@ -505,11 +478,34 @@ async def _get_changed_files(project_dir: Path) -> list[str]:
             text=True,
             timeout=10,
         )
-
         if result.returncode == 0:
-            return [f.strip() for f in result.stdout.split("\n") if f.strip()]
-
+            files.update(f.strip() for f in result.stdout.split("\n") if f.strip())
     except Exception:
         pass
 
-    return []
+    return sorted(files)
+
+
+async def _collect_changed_files(state: WorkflowState, project_dir: Path) -> list[str]:
+    """Collect changed files from state and git."""
+    files = set()
+    impl_result = state.get("implementation_result", {})
+    if impl_result:
+        files.update(impl_result.get("files_created", []) or [])
+        files.update(impl_result.get("files_modified", []) or [])
+
+    files.update(await _get_changed_files(project_dir))
+    return sorted(f for f in files if f)
+
+
+def _is_docs_only_changes(files: list[str]) -> bool:
+    """Check if all changes are documentation-only."""
+    if not files:
+        return False
+
+    doc_exts = {".md", ".txt", ".rst", ".adoc"}
+    for file_path in files:
+        path = Path(file_path)
+        if path.suffix.lower() not in doc_exts:
+            return False
+    return True

@@ -444,6 +444,78 @@ class WorktreeManager:
             logger.error(f"Failed to list worktrees: {e}")
             return []
 
+    def cleanup_orphaned_worktrees(self) -> int:
+        """Clean up orphaned worktrees from previous runs.
+
+        Scans for worktree directories matching the pattern project-worker-*
+        and removes them if they are not currently tracked.
+
+        Returns:
+            Number of orphaned worktrees removed
+        """
+        logger.info("Checking for orphaned worktrees...")
+        
+        # Get list of all git worktrees
+        git_worktrees = self.list_worktrees()
+        git_worktree_paths = {Path(wt["path"]).resolve() for wt in git_worktrees}
+        
+        # Identify our main project path to avoid deleting it
+        project_path = self.project_dir.resolve()
+        
+        # Pattern for our worker worktrees
+        worker_pattern = f"{self.project_dir.name}-worker-*"
+        parent_dir = self.project_dir.parent
+        
+        removed_count = 0
+        
+        # Check all matching directories in parent
+        for path in parent_dir.glob(worker_pattern):
+            path = path.resolve()
+            
+            # Skip if it's the project dir itself (unlikely with pattern, but safe)
+            if path == project_path:
+                continue
+                
+            # If it's a directory and looks like one of our workers
+            if path.is_dir():
+                # Check if git knows about it
+                is_known = path in git_worktree_paths
+                
+                # If git knows about it, remove it cleanly
+                if is_known:
+                    logger.info(f"Removing known orphaned worktree: {path}")
+                    try:
+                        subprocess.run(
+                            ["git", "worktree", "remove", "--force", str(path)],
+                            cwd=str(self.project_dir),
+                            capture_output=True,
+                            check=True
+                        )
+                        removed_count += 1
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Failed to remove worktree {path}: {e}")
+                
+                # If git doesn't know about it but it exists on disk, 
+                # it might be a left-over directory. 
+                # Be careful not to delete random directories.
+                # Only delete if it matches our specific UUID pattern length or format
+                # For now, we only delete if it WAS a git worktree or we are sure.
+                # To be safe, we mainly rely on 'git worktree prune' which is called in cleanup_worktrees
+                pass
+
+        # Prune any stale references
+        try:
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+                check=False,
+            )
+        except Exception:
+            pass
+            
+        return removed_count
+
     def __enter__(self):
         """Context manager entry."""
         return self

@@ -28,6 +28,17 @@ from .ralph_loop import (
     run_ralph_loop,
     detect_test_framework,
     COMPLETION_PROMISE,
+    # New: Execution modes and token tracking
+    ExecutionMode,
+    HookConfig,
+    TokenMetrics,
+    TokenUsageTracker,
+    create_ralph_config,
+)
+from .hooks import (
+    HookManager,
+    HookResult,
+    create_hook_manager,
 )
 from .action_logging import (
     NodeActionLogger,
@@ -58,6 +69,16 @@ __all__ = [
     "run_ralph_loop",
     "detect_test_framework",
     "COMPLETION_PROMISE",
+    # New: Execution modes and token tracking
+    "ExecutionMode",
+    "HookConfig",
+    "TokenMetrics",
+    "TokenUsageTracker",
+    "create_ralph_config",
+    # Hook integration
+    "HookManager",
+    "HookResult",
+    "create_hook_manager",
     # Action logging integration
     "NodeActionLogger",
     "get_node_logger",

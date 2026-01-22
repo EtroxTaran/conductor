@@ -25,6 +25,7 @@ from ..integrations import (
     save_issue_mapping,
     create_markdown_tracker,
 )
+from ..integrations.board_sync import sync_board
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,14 @@ async def task_breakdown_node(state: WorkflowState) -> dict[str, Any]:
     task_files = markdown_tracker.create_task_files(tasks, linear_mapping)
     if task_files:
         logger.info(f"Created {len(task_files)} markdown task files")
+
+    # Sync to Kanban board
+    try:
+        sync_state = dict(state)
+        sync_state["tasks"] = tasks
+        sync_board(sync_state)
+    except Exception as e:
+        logger.warning(f"Failed to sync board in task breakdown: {e}")
 
     logger.info(f"Created {len(tasks)} tasks in {len(milestones)} milestones")
 

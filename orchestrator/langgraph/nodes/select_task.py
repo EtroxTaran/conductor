@@ -8,17 +8,20 @@ Selects the next task to implement based on:
 """
 
 import logging
+import os
 from datetime import datetime
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any
 
 from ..state import (
     WorkflowState,
     Task,
     TaskStatus,
     get_available_tasks,
-    get_task_by_id,
     all_tasks_completed,
 )
+from ..integrations.board_sync import sync_board
+from ...config import load_project_config
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +55,24 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
     tasks = state.get("tasks", [])
     completed_ids = set(state.get("completed_task_ids", []))
     failed_ids = set(state.get("failed_task_ids", []))
+    in_flight_ids = set(state.get("in_flight_task_ids", []))
 
     # Check if all tasks are done
     if all_tasks_completed(state):
         logger.info("All tasks completed")
         return {
             "current_task_id": None,
+            "current_task_ids": [],
+            "in_flight_task_ids": [],
             "next_decision": "continue",  # Move to build_verification
             "updated_at": datetime.now().isoformat(),
         }
 
     # Get tasks that are ready to execute
-    available = get_available_tasks(state)
+    available = [
+        task for task in get_available_tasks(state)
+        if task.get("id") not in in_flight_ids
+    ]
 
     if not available:
         # Check for dependency deadlock
@@ -74,6 +83,8 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
             logger.error("Dependency deadlock detected - no tasks available but work remains")
             return {
                 "current_task_id": None,
+                "current_task_ids": [],
+                "in_flight_task_ids": [],
                 "errors": [{
                     "type": "dependency_deadlock",
                     "message": f"Dependency deadlock: {len(pending_tasks)} tasks pending but none available",
@@ -88,6 +99,8 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
             logger.info("All tasks processed (some may have failed)")
             return {
                 "current_task_id": None,
+                "current_task_ids": [],
+                "in_flight_task_ids": [],
                 "next_decision": "continue",
                 "updated_at": datetime.now().isoformat(),
             }
@@ -95,19 +108,43 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
     # Sort available tasks by priority, milestone, and ID
     sorted_tasks = _sort_tasks_by_priority(available, state.get("milestones", []))
 
-    # Select the first task
-    selected = sorted_tasks[0]
-    task_id = selected["id"]
+    # Determine batch size
+    project_dir = Path(state["project_dir"])
+    max_workers = _get_parallel_workers(project_dir)
+    batch_limit = max(1, min(max_workers, len(sorted_tasks)))
 
-    # Update task status to in_progress
-    updated_task = dict(selected)
-    updated_task["status"] = TaskStatus.IN_PROGRESS
+    # Select a batch of independent tasks
+    selected_tasks = _select_independent_tasks(sorted_tasks, batch_limit)
+    if not selected_tasks:
+        # Fallback to single task if independence filter excluded all
+        selected_tasks = sorted_tasks[:1]
 
-    logger.info(f"Selected task: {task_id} - {selected.get('title', 'Unknown')}")
+    task_ids = [task["id"] for task in selected_tasks]
+    logger.info(f"Selected task batch: {task_ids}")
+
+    # Update task statuses to in_progress
+    updated_tasks = []
+    for task in selected_tasks:
+        updated = dict(task)
+        updated["status"] = TaskStatus.IN_PROGRESS
+        updated_tasks.append(updated)
+
+    # Sync to Kanban board
+    try:
+        # Create updated task list for sync
+        updated_task_ids = {t["id"] for t in updated_tasks}
+        updated_tasks_list = [t for t in tasks if t["id"] not in updated_task_ids] + updated_tasks
+        sync_state = dict(state)
+        sync_state["tasks"] = updated_tasks_list
+        sync_board(sync_state)
+    except Exception as e:
+        logger.warning(f"Failed to sync board in select task: {e}")
 
     return {
-        "current_task_id": task_id,
-        "tasks": [updated_task],  # Will be merged by reducer
+        "current_task_id": task_ids[0] if task_ids else None,
+        "current_task_ids": task_ids,
+        "in_flight_task_ids": task_ids,
+        "tasks": updated_tasks,  # Will be merged by reducer
         "next_decision": "continue",
         "updated_at": datetime.now().isoformat(),
     }
@@ -144,6 +181,50 @@ def _sort_tasks_by_priority(
         return (priority, milestone_pos, task_num)
 
     return sorted(tasks, key=sort_key)
+
+
+def _get_parallel_workers(project_dir: Path) -> int:
+    """Determine parallel worker count from config or environment."""
+    env_value = os.environ.get("PARALLEL_WORKERS")
+    if env_value and env_value.isdigit():
+        return max(1, int(env_value))
+
+    config = load_project_config(project_dir)
+    parallel_workers = getattr(config.workflow, "parallel_workers", 1)
+    try:
+        return max(1, int(parallel_workers))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _task_file_set(task: Task) -> set[str]:
+    """Get the set of files associated with a task."""
+    files = (task.get("files_to_create") or []) + (task.get("files_to_modify") or [])
+    return {f for f in files if f}
+
+
+def _select_independent_tasks(tasks: list[Task], limit: int) -> list[Task]:
+    """Select tasks that do not share files_to_create/files_to_modify."""
+    selected: list[Task] = []
+    used_files: set[str] = set()
+
+    for task in tasks:
+        if len(selected) >= limit:
+            break
+
+        task_files = _task_file_set(task)
+
+        # If task has no file metadata, keep it single to be safe
+        if not task_files and selected:
+            continue
+
+        if task_files and task_files & used_files:
+            continue
+
+        selected.append(task)
+        used_files.update(task_files)
+
+    return selected
 
 
 def get_task_summary(state: WorkflowState) -> dict:

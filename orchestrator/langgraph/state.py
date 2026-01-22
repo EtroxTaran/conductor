@@ -298,6 +298,29 @@ def _append_unique(
     return result
 
 
+def _replace_unique(
+    existing: Optional[list[str]],
+    new: Optional[list[str]],
+) -> list[str]:
+    """Reducer for replacing lists with unique values.
+
+    Args:
+        existing: Existing list
+        new: New list (replaces existing)
+
+    Returns:
+        New list with unique items (order preserved)
+    """
+    if new is None:
+        return existing or []
+
+    result: list[str] = []
+    for item in new:
+        if item not in result:
+            result.append(item)
+    return result
+
+
 def _merge_tasks(
     existing: Optional[list[Task]],
     new: list[Task],
@@ -427,6 +450,9 @@ class WorkflowState(TypedDict, total=False):
         validation_feedback: Feedback from Phase 2 (parallel merge)
         verification_feedback: Feedback from Phase 4 (parallel merge)
         implementation_result: Result from Phase 3
+        review_skipped: Whether reviews were skipped
+        review_changed_files: Files considered for review gating
+        review_skipped_reason: Reason reviews were skipped
         next_decision: Routing decision for conditional edges
         errors: List of errors (append-only)
         checkpoints: List of checkpoint IDs
@@ -436,8 +462,30 @@ class WorkflowState(TypedDict, total=False):
         tasks: List of implementation tasks (incremental execution)
         milestones: List of task milestones
         current_task_id: ID of currently executing task
+        current_task_ids: IDs of currently executing task batch
+        in_flight_task_ids: IDs of tasks in progress (batch)
         completed_task_ids: IDs of completed tasks (append-only unique)
         failed_task_ids: IDs of failed tasks (append-only unique)
+
+        # Discussion phase (GSD pattern)
+        discussion_complete: Whether discussion phase completed
+        context_file: Path to generated CONTEXT.md
+        developer_preferences: Captured developer preferences
+        needs_clarification: Whether human input is needed
+
+        # Research phase (GSD pattern)
+        research_complete: Whether research phase completed
+        research_findings: Findings from research agents
+        research_errors: Errors from research agents (non-blocking)
+
+        # Execution mode (Ralph Wiggum pattern)
+        execution_mode: Current execution mode (hitl or afk)
+
+        # Token/cost tracking
+        token_usage: Token and cost tracking metrics
+
+        # Session management
+        last_handoff: Path to last handoff brief
     """
 
     # Project identification
@@ -454,6 +502,9 @@ class WorkflowState(TypedDict, total=False):
     validation_feedback: Annotated[Optional[dict[str, AgentFeedback]], _merge_feedback]
     verification_feedback: Annotated[Optional[dict[str, AgentFeedback]], _merge_feedback]
     implementation_result: Optional[dict]
+    review_skipped: Optional[bool]
+    review_changed_files: list[str]
+    review_skipped_reason: Optional[str]
 
     # Routing
     next_decision: Optional[WorkflowDecision]
@@ -473,8 +524,30 @@ class WorkflowState(TypedDict, total=False):
     tasks: Annotated[list[Task], _merge_tasks]
     milestones: list[Milestone]
     current_task_id: Optional[str]
+    current_task_ids: Annotated[list[str], _replace_unique]
+    in_flight_task_ids: Annotated[list[str], _replace_unique]
     completed_task_ids: Annotated[list[str], _append_unique]
     failed_task_ids: Annotated[list[str], _append_unique]
+
+    # Discussion phase (GSD pattern)
+    discussion_complete: bool
+    context_file: Optional[str]
+    developer_preferences: Optional[dict]
+    needs_clarification: bool
+
+    # Research phase (GSD pattern)
+    research_complete: bool
+    research_findings: Optional[dict]
+    research_errors: Optional[list[dict]]
+
+    # Execution mode (Ralph Wiggum pattern)
+    execution_mode: str  # "hitl" (human-in-the-loop) or "afk" (autonomous)
+
+    # Token/cost tracking
+    token_usage: Optional[dict]
+
+    # Session management
+    last_handoff: Optional[str]
 
 
 def create_initial_state(
@@ -508,6 +581,9 @@ def create_initial_state(
         validation_feedback=None,
         verification_feedback=None,
         implementation_result=None,
+        review_skipped=False,
+        review_changed_files=[],
+        review_skipped_reason=None,
         next_decision=None,
         errors=[],
         checkpoints=[],
@@ -518,8 +594,25 @@ def create_initial_state(
         tasks=[],
         milestones=[],
         current_task_id=None,
+        current_task_ids=[],
+        in_flight_task_ids=[],
         completed_task_ids=[],
         failed_task_ids=[],
+        # Discussion phase fields (GSD pattern)
+        discussion_complete=False,
+        context_file=None,
+        developer_preferences=None,
+        needs_clarification=False,
+        # Research phase fields (GSD pattern)
+        research_complete=False,
+        research_findings=None,
+        research_errors=None,
+        # Execution mode (Ralph Wiggum pattern)
+        execution_mode="afk",  # Default to autonomous mode
+        # Token/cost tracking
+        token_usage=None,
+        # Session management
+        last_handoff=None,
     )
 
 
@@ -911,6 +1004,7 @@ def get_workflow_summary(state: WorkflowState) -> dict:
         "failed": len(failed_ids),
         "pending": len([t for t in tasks if t.get("id") not in completed_ids and t.get("id") not in failed_ids]),
         "current_task_id": state.get("current_task_id"),
+        "current_task_ids": state.get("current_task_ids", []),
     }
 
     return {

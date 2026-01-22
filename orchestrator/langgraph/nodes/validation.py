@@ -15,6 +15,7 @@ from typing import Any
 
 from ..state import WorkflowState, PhaseStatus, PhaseState, AgentFeedback
 from ..integrations.action_logging import get_node_logger
+from ...review.resolver import ConflictResolver
 
 logger = logging.getLogger(__name__)
 
@@ -438,46 +439,27 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
             "next_decision": "retry",
         }
 
-    # Calculate combined score
-    # Weight: Cursor 0.5 for code quality, Gemini 0.5 for architecture
-    cursor_score = cursor_feedback.score if hasattr(cursor_feedback, "score") else 0
-    gemini_score = gemini_feedback.score if hasattr(gemini_feedback, "score") else 0
-    combined_score = (cursor_score * 0.5) + (gemini_score * 0.5)
-
-    # Check for blocking issues
-    blocking_issues = []
-    if hasattr(cursor_feedback, "blocking_issues"):
-        blocking_issues.extend([
-            {"agent": "cursor", "issue": issue}
-            for issue in cursor_feedback.blocking_issues
-        ])
-    if hasattr(gemini_feedback, "blocking_issues"):
-        blocking_issues.extend([
-            {"agent": "gemini", "issue": issue}
-            for issue in gemini_feedback.blocking_issues
-        ])
+    # Resolve conflicts using 4-Eyes Protocol
+    resolver = ConflictResolver()
+    result = resolver.resolve(cursor_feedback, gemini_feedback)
 
     # Determine approval
-    cursor_approved = cursor_feedback.approved if hasattr(cursor_feedback, "approved") else False
-    gemini_approved = gemini_feedback.approved if hasattr(gemini_feedback, "approved") else False
-    both_approved = cursor_approved and gemini_approved
-
-    # Approval thresholds
-    MIN_SCORE = 6.0
-    approved = both_approved and combined_score >= MIN_SCORE and len(blocking_issues) == 0
+    approved = result.approved
+    combined_score = result.final_score
+    blocking_issues = result.blocking_issues
 
     logger.info(
         f"Validation result: score={combined_score:.1f}, "
-        f"cursor={cursor_approved}, gemini={gemini_approved}, "
-        f"blocking_issues={len(blocking_issues)}, approved={approved}"
+        f"approved={approved}, decision={result.action}"
     )
 
     # Save consolidated feedback
     consolidated = {
         "combined_score": combined_score,
-        "cursor_approved": cursor_approved,
-        "gemini_approved": gemini_approved,
+        "cursor_score": cursor_feedback.score if hasattr(cursor_feedback, "score") else 0,
+        "gemini_score": gemini_feedback.score if hasattr(gemini_feedback, "score") else 0,
         "approved": approved,
+        "decision": result.action,
         "blocking_issues": blocking_issues,
         "timestamp": datetime.now().isoformat(),
     }

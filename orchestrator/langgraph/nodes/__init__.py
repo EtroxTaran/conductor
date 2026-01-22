@@ -8,7 +8,7 @@ from .prerequisites import prerequisites_node
 from .planning import planning_node
 from .validation import cursor_validate_node, gemini_validate_node, validation_fan_in_node
 from .implementation import implementation_node
-from .verification import cursor_review_node, gemini_review_node, verification_fan_in_node
+from .verification import cursor_review_node, gemini_review_node, verification_fan_in_node, review_gate_node
 from .completion import completion_node
 from .escalation import human_escalation_node
 
@@ -23,8 +23,17 @@ from .approval_gate import approval_gate_node
 # Task loop nodes (incremental execution)
 from .task_breakdown import task_breakdown_node
 from .select_task import select_next_task_node
-from .implement_task import implement_task_node
+from .implement_task import implement_task_node, implement_tasks_parallel_node
 from .verify_task import verify_task_node
+from .write_tests import write_tests_node
+from .fix_bug import fix_bug_node
+
+# Discussion and Research nodes (GSD pattern)
+from .discuss_phase import discuss_phase_node
+from .research_phase import research_phase_node
+
+# Handoff node (GSD pattern)
+from .generate_handoff import generate_handoff_node
 
 __all__ = [
     "prerequisites_node",
@@ -35,6 +44,7 @@ __all__ = [
     "implementation_node",
     "cursor_review_node",
     "gemini_review_node",
+    "review_gate_node",
     "verification_fan_in_node",
     "completion_node",
     "human_escalation_node",
@@ -49,5 +59,14 @@ __all__ = [
     "task_breakdown_node",
     "select_next_task_node",
     "implement_task_node",
+    "implement_tasks_parallel_node",
     "verify_task_node",
+    "verify_tasks_parallel_node",
+    "write_tests_node",
+    "fix_bug_node",
+    # Discussion and Research nodes (GSD pattern)
+    "discuss_phase_node",
+    "research_phase_node",
+    # Handoff node (GSD pattern)
+    "generate_handoff_node",
 ]

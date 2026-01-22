@@ -26,6 +26,7 @@ from .nodes import (
     implementation_node,
     cursor_review_node,
     gemini_review_node,
+    review_gate_node,
     verification_fan_in_node,
     human_escalation_node,
     completion_node,
@@ -40,7 +41,15 @@ from .nodes import (
     task_breakdown_node,
     select_next_task_node,
     implement_task_node,
+    implement_tasks_parallel_node,
     verify_task_node,
+    write_tests_node,
+    fix_bug_node,
+    # Discussion and Research nodes (GSD pattern)
+    discuss_phase_node,
+    research_phase_node,
+    # Handoff node (GSD pattern)
+    generate_handoff_node,
 )
 from .routers import (
     prerequisites_router,
@@ -61,7 +70,13 @@ from .routers import (
     task_breakdown_router,
     select_task_router,
     implement_task_router,
+    implement_tasks_parallel_router,
     verify_task_router,
+    write_tests_router,
+    fix_bug_router,
+    # Discussion and Research routers (GSD pattern)
+    discuss_router,
+    research_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,10 +93,11 @@ def create_workflow_graph(
     - Parallel fan-out/fan-in for validation and verification
     - Human escalation and approval gates
     - Configurable feature flags for optional nodes
+    - Discussion and Research phases for informed planning (GSD pattern)
 
     Enhanced workflow path with task loop:
     ```
-    prerequisites → product_validation → planning →
+    prerequisites → DISCUSS → RESEARCH → product_validation → planning →
     [cursor_validate || gemini_validate] → validation_fan_in →
     approval_gate → pre_implementation → task_breakdown →
     ┌─────────────────────────────────────────┐
@@ -221,6 +237,11 @@ def create_workflow_graph(
     # Add all nodes with appropriate retry policies
     # Core workflow nodes
     graph.add_node("prerequisites", prerequisites_node)
+
+    # Discussion and Research nodes (GSD pattern)
+    graph.add_node("discuss", discuss_phase_node)
+    graph.add_node("research", research_phase_node)
+
     graph.add_node("product_validation", product_validation_node)
     graph.add_node("planning", planning_node, retry=agent_retry_policy)
     graph.add_node("cursor_validate", cursor_validate_node, retry=agent_retry_policy)
@@ -232,7 +253,9 @@ def create_workflow_graph(
     # Task loop nodes (incremental execution)
     graph.add_node("task_breakdown", task_breakdown_node)
     graph.add_node("select_task", select_next_task_node)
+    graph.add_node("write_tests", write_tests_node)
     graph.add_node("implement_task", implement_task_node, retry=implementation_retry_policy)
+    graph.add_node("fix_bug", fix_bug_node)
     graph.add_node("verify_task", verify_task_node)
 
     # Legacy implementation node (kept for compatibility)
@@ -240,6 +263,7 @@ def create_workflow_graph(
 
     # Post-implementation nodes
     graph.add_node("build_verification", build_verification_node)
+    graph.add_node("review_gate", review_gate_node)
     graph.add_node("cursor_review", cursor_review_node, retry=agent_retry_policy)
     graph.add_node("gemini_review", gemini_review_node, retry=agent_retry_policy)
     graph.add_node("verification_fan_in", verification_fan_in_node)
@@ -247,6 +271,9 @@ def create_workflow_graph(
     graph.add_node("security_scan", security_scan_node)
     graph.add_node("human_escalation", human_escalation_node)
     graph.add_node("completion", completion_node)
+
+    # Handoff node (GSD pattern) - generates session brief before END
+    graph.add_node("generate_handoff", generate_handoff_node)
 
     if retry_enabled:
         logger.info("Retry policies enabled for agent nodes")
@@ -256,14 +283,36 @@ def create_workflow_graph(
     # Start → prerequisites
     graph.add_edge(START, "prerequisites")
 
-    # Prerequisites → product_validation (with conditional for escalation)
+    # Prerequisites → discuss (with conditional for escalation)
     graph.add_conditional_edges(
         "prerequisites",
         prerequisites_router,
         {
-            "planning": "product_validation",  # Changed: go to product_validation first
+            "planning": "discuss",  # Changed: go to discuss phase first (GSD pattern)
             "human_escalation": "human_escalation",
             "__end__": END,
+        },
+    )
+
+    # Discuss → research (mandatory discussion phase, GSD pattern)
+    graph.add_conditional_edges(
+        "discuss",
+        discuss_router,
+        {
+            "discuss_complete": "research",
+            "human_escalation": "human_escalation",
+            "discuss_retry": "discuss",
+        },
+    )
+
+    # Research → product_validation (2 parallel agents run internally)
+    graph.add_conditional_edges(
+        "research",
+        research_router,
+        {
+            "research_complete": "product_validation",
+            "human_escalation": "human_escalation",
+            "research_retry": "research",
         },
     )
 
@@ -334,13 +383,24 @@ def create_workflow_graph(
         },
     )
 
-    # Select task → implement_task or build_verification (all done)
+    # Select task → write_tests or build_verification (all done)
     graph.add_conditional_edges(
         "select_task",
         select_task_router,
         {
-            "implement_task": "implement_task",
+            "implement_task": "write_tests", # Go to write_tests first
+            "implement_tasks_parallel": "implement_tasks_parallel",
             "build_verification": "build_verification",  # All tasks done
+            "human_escalation": "human_escalation",
+        },
+    )
+
+    # Write tests → implement_task
+    graph.add_conditional_edges(
+        "write_tests",
+        write_tests_router,
+        {
+            "implement_task": "implement_task",
             "human_escalation": "human_escalation",
         },
     )
@@ -356,13 +416,34 @@ def create_workflow_graph(
         },
     )
 
-    # Verify task → LOOP BACK to select_task or retry/escalate
+    # Parallel implementation → parallel verification
+    graph.add_conditional_edges(
+        "implement_tasks_parallel",
+        implement_tasks_parallel_router,
+        {
+            "verify_tasks_parallel": "verify_tasks_parallel",
+            "implement_tasks_parallel": "implement_tasks_parallel",
+            "human_escalation": "human_escalation",
+        },
+    )
+
+    # Verify task → LOOP BACK to select_task or retry (via fix_bug)
     graph.add_conditional_edges(
         "verify_task",
         verify_task_router,
         {
             "select_task": "select_task",  # LOOP BACK - get next task
-            "implement_task": "implement_task",  # Retry same task
+            "implement_task": "fix_bug",  # Retry via Bug Fixer
+            "human_escalation": "human_escalation",
+        },
+    )
+
+    # Fix bug → verify_task
+    graph.add_conditional_edges(
+        "fix_bug",
+        fix_bug_router,
+        {
+            "verify_task": "verify_task",
             "human_escalation": "human_escalation",
         },
     )
@@ -372,12 +453,11 @@ def create_workflow_graph(
     # Legacy: Implementation → build_verification (for backward compatibility)
     graph.add_edge("implementation", "build_verification")
 
-    # Build verification → parallel verification fan-out
-    # Both review nodes run in parallel after build passes
-    # Build failures are handled by having build_verification_node set errors in state
-    # and verification_fan_in will check for build errors
-    graph.add_edge("build_verification", "cursor_review")
-    graph.add_edge("build_verification", "gemini_review")
+    # Build verification → review gate → parallel verification fan-out
+    # Both review nodes run in parallel after build passes (unless gated)
+    graph.add_edge("build_verification", "review_gate")
+    graph.add_edge("review_gate", "cursor_review")
+    graph.add_edge("review_gate", "gemini_review")
 
     # Verification fan-in: both reviewers merge here
     graph.add_edge("cursor_review", "verification_fan_in")
@@ -419,8 +499,9 @@ def create_workflow_graph(
         },
     )
 
-    # Completion → end
-    graph.add_edge("completion", END)
+    # Completion → generate_handoff → END (GSD pattern)
+    graph.add_edge("completion", "generate_handoff")
+    graph.add_edge("generate_handoff", END)
 
     # Human escalation → conditional routing based on human response
     graph.add_conditional_edges(

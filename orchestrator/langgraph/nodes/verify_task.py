@@ -22,6 +22,8 @@ from ..integrations import (
     load_issue_mapping,
     create_markdown_tracker,
 )
+from ..integrations.board_sync import sync_board
+from orchestrator.utils.uat_generator import UATGenerator, create_uat_generator
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +108,14 @@ async def verify_task_node(state: WorkflowState) -> dict[str, Any]:
             "verified_at": datetime.now().isoformat(),
         })
 
+        # Generate UAT document (GSD pattern)
+        _generate_task_uat(
+            project_dir=project_dir,
+            task=task,
+            phase=state.get("current_phase", 3),
+            test_output=test_result.get("output", ""),
+        )
+
         # Update task status in trackers
         completion_notes = "Task verified successfully - all tests passed"
         _update_task_trackers_on_completion(
@@ -114,10 +124,22 @@ async def verify_task_node(state: WorkflowState) -> dict[str, Any]:
 
         logger.info(f"Task {task_id} verified successfully")
 
+        # Sync to Kanban board
+        try:
+            tasks = state.get("tasks", [])
+            updated_tasks_list = [t for t in tasks if t["id"] != task_id] + [updated_task]
+            sync_state = dict(state)
+            sync_state["tasks"] = updated_tasks_list
+            sync_board(sync_state)
+        except Exception as e:
+            logger.warning(f"Failed to sync board in verify task: {e}")
+
         return {
             "tasks": [updated_task],
             "completed_task_ids": [task_id],
             "current_task_id": None,  # Clear current task
+            "current_task_ids": [],
+            "in_flight_task_ids": [],
             "next_decision": "continue",  # Loop back to select_task
             "updated_at": datetime.now().isoformat(),
         }
@@ -125,6 +147,156 @@ async def verify_task_node(state: WorkflowState) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Verification error for task {task_id}: {e}")
         return _handle_verification_failure(updated_task, str(e), project_dir)
+
+
+async def verify_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
+    """Verify a batch of task implementations.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        State updates with verification results
+    """
+    task_ids = state.get("current_task_ids", [])
+    if not task_ids:
+        return {
+            "errors": [{
+                "type": "verify_task_error",
+                "message": "No task batch selected for verification",
+                "timestamp": datetime.now().isoformat(),
+            }],
+            "next_decision": "escalate",
+        }
+
+    project_dir = Path(state["project_dir"])
+    updated_tasks_map = {}
+    errors: list[dict] = []
+    failed_task_ids: list[str] = []
+    completed_task_ids: list[str] = []
+    retry_task_ids: list[str] = []
+    should_escalate = False
+
+    for task_id in task_ids:
+        task = get_task_by_id(state, task_id)
+        if not task:
+            errors.append({
+                "type": "verify_task_error",
+                "message": f"Task {task_id} not found",
+                "timestamp": datetime.now().isoformat(),
+            })
+            should_escalate = True
+            continue
+
+        updated_task = dict(task)
+        try:
+            files_check = _verify_files_created(project_dir, task)
+            test_result = await _run_task_tests(project_dir, task)
+
+            if not files_check["success"]:
+                failure = _handle_verification_failure(
+                    updated_task,
+                    f"Missing files: {files_check.get('missing', [])}",
+                    project_dir,
+                )
+                updated_task = failure["tasks"][0]
+                errors.extend(failure.get("errors", []))
+                failed_task_ids.extend(failure.get("failed_task_ids", []))
+                if failure.get("next_decision") == "retry":
+                    retry_task_ids.append(task_id)
+                else:
+                    should_escalate = True
+                updated_tasks_map[task_id] = updated_task
+                continue
+
+            if not test_result["success"]:
+                if not test_result.get("no_tests"):
+                    failure = _handle_verification_failure(
+                        updated_task,
+                        f"Tests failed: {test_result.get('error', 'Unknown')}",
+                        project_dir,
+                    )
+                    updated_task = failure["tasks"][0]
+                    errors.extend(failure.get("errors", []))
+                    failed_task_ids.extend(failure.get("failed_task_ids", []))
+                    if failure.get("next_decision") == "retry":
+                        retry_task_ids.append(task_id)
+                    else:
+                        should_escalate = True
+                    updated_tasks_map[task_id] = updated_task
+                    continue
+
+            # Task verified successfully
+            updated_task["status"] = TaskStatus.COMPLETED
+            completed_task_ids.append(task_id)
+
+            _save_verification_result(project_dir, task_id, {
+                "files_check": files_check,
+                "test_result": test_result,
+                "verified_at": datetime.now().isoformat(),
+            })
+
+            # Generate UAT document (GSD pattern)
+            _generate_task_uat(
+                project_dir=project_dir,
+                task=task,
+                phase=state.get("current_phase", 3),
+                test_output=test_result.get("output", ""),
+            )
+
+            completion_notes = "Task verified successfully - all tests passed"
+            _update_task_trackers_on_completion(
+                project_dir, task_id, TaskStatus.COMPLETED, completion_notes
+            )
+
+            updated_tasks_map[task_id] = updated_task
+
+        except Exception as e:
+            failure = _handle_verification_failure(updated_task, str(e), project_dir)
+            updated_task = failure["tasks"][0]
+            errors.extend(failure.get("errors", []))
+            failed_task_ids.extend(failure.get("failed_task_ids", []))
+            if failure.get("next_decision") == "retry":
+                retry_task_ids.append(task_id)
+            else:
+                should_escalate = True
+            updated_tasks_map[task_id] = updated_task
+
+    # Sync to Kanban board
+    try:
+        tasks = state.get("tasks", [])
+        updated_task_ids = set(updated_tasks_map.keys())
+        updated_tasks_list = [t for t in tasks if t["id"] not in updated_task_ids] + list(updated_tasks_map.values())
+        sync_state = dict(state)
+        sync_state["tasks"] = updated_tasks_list
+        sync_board(sync_state)
+    except Exception as e:
+        logger.warning(f"Failed to sync board in parallel verify: {e}")
+
+    next_decision = "continue"
+    current_task_ids = []
+    in_flight_task_ids = []
+    current_task_id = None
+
+    if should_escalate:
+        next_decision = "escalate"
+    elif retry_task_ids:
+        next_decision = "retry"
+        current_task_ids = retry_task_ids
+        in_flight_task_ids = retry_task_ids
+        current_task_id = retry_task_ids[0]
+
+    return {
+        "tasks": list(updated_tasks_map.values()),
+        "completed_task_ids": completed_task_ids,
+        "failed_task_ids": failed_task_ids,
+        "errors": errors,
+        "current_task_id": current_task_id,
+        "current_task_ids": current_task_ids,
+        "in_flight_task_ids": in_flight_task_ids,
+        "next_decision": next_decision,
+        "updated_at": datetime.now().isoformat(),
+    }
 
 
 def _verify_files_created(project_dir: Path, task: Task) -> dict:
@@ -449,3 +621,81 @@ def _update_task_trackers_on_completion(
 
     except Exception as e:
         logger.warning(f"Failed to update Linear for task {task_id}: {e}")
+
+
+def _generate_task_uat(
+    project_dir: Path,
+    task: Task,
+    phase: int,
+    test_output: str = "",
+    git_diff: str = "",
+) -> None:
+    """Generate UAT document for a completed task.
+
+    Args:
+        project_dir: Project directory
+        task: Completed task
+        phase: Current phase number
+        test_output: Test command output
+        git_diff: Git diff output
+    """
+    try:
+        uat_generator = create_uat_generator(project_dir)
+
+        # Get git diff for the task files if not provided
+        if not git_diff:
+            git_diff = _get_task_git_diff(project_dir, task)
+
+        uat = uat_generator.generate_from_task(
+            task=task,
+            phase=phase,
+            test_output=test_output,
+            git_diff=git_diff,
+        )
+
+        # Save both markdown and JSON
+        saved = uat_generator.save_uat(uat, format="both")
+
+        logger.info(f"Generated UAT document for task {task.get('id')}: {saved.get('markdown')}")
+
+    except Exception as e:
+        logger.warning(f"Failed to generate UAT for task {task.get('id')}: {e}")
+
+
+def _get_task_git_diff(project_dir: Path, task: Task) -> str:
+    """Get git diff for task files.
+
+    Args:
+        project_dir: Project directory
+        task: Task with file information
+
+    Returns:
+        Git diff output string
+    """
+    try:
+        import subprocess
+
+        # Get all task-related files
+        files = (
+            task.get("files_to_create", [])
+            + task.get("files_to_modify", [])
+            + task.get("test_files", [])
+        )
+
+        if not files:
+            return ""
+
+        # Run git diff for staged and unstaged changes
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--"] + files,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        return result.stdout if result.returncode == 0 else ""
+
+    except Exception as e:
+        logger.warning(f"Failed to get git diff for task: {e}")
+        return ""

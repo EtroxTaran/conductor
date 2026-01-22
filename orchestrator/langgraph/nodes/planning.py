@@ -1,7 +1,7 @@
 """Planning node for Phase 1.
 
 Generates implementation plan from PRODUCT.md specification
-using Claude CLI.
+using Claude CLI via Specialist Runner (A01-planner).
 """
 
 import asyncio
@@ -15,54 +15,15 @@ from typing import Any
 
 from ..state import WorkflowState, PhaseStatus, PhaseState
 from ..integrations.action_logging import get_node_logger
+from ...specialists.runner import SpecialistRunner
 
 logger = logging.getLogger(__name__)
-
-PLANNING_PROMPT = """You are a senior software architect. Analyze the following product specification and create a detailed implementation plan.
-
-PRODUCT SPECIFICATION:
-{product_spec}
-
-Create a JSON response with the following structure:
-{{
-    "plan_name": "Name of the feature/project",
-    "summary": "Brief summary of what will be built",
-    "phases": [
-        {{
-            "phase": 1,
-            "name": "Phase name",
-            "tasks": [
-                {{
-                    "id": "T1",
-                    "description": "Task description",
-                    "files": ["list of files to create/modify"],
-                    "dependencies": [],
-                    "estimated_complexity": "low|medium|high"
-                }}
-            ]
-        }}
-    ],
-    "test_strategy": {{
-        "unit_tests": ["List of unit test files"],
-        "integration_tests": ["List of integration tests"],
-        "test_commands": ["Commands to run tests"]
-    }},
-    "risks": ["List of potential risks"],
-    "estimated_complexity": "low|medium|high"
-}}
-
-Focus on:
-1. Breaking work into small, testable tasks
-2. Identifying all files that need to be created or modified
-3. Defining clear dependencies between tasks
-4. Planning tests before implementation (TDD approach)
-5. Identifying potential risks and mitigation strategies"""
 
 
 async def planning_node(state: WorkflowState) -> dict[str, Any]:
     """Generate implementation plan from specification.
 
-    Uses Claude SDK or CLI to analyze PRODUCT.md and generate
+    Uses A01-planner specialist to analyze PRODUCT.md and generate
     a structured implementation plan.
 
     Args:
@@ -106,32 +67,24 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
 
     product_spec = product_file.read_text()
 
-    # Build prompt
-    prompt = PLANNING_PROMPT.format(product_spec=product_spec)
+    # Build simple prompt (instructions are in A01-planner/CLAUDE.md)
+    prompt = f"PRODUCT SPECIFICATION:\n{product_spec}"
 
-    action_logger.log_agent_invoke("claude", "Generating implementation plan", phase=1)
+    action_logger.log_agent_invoke("A01-planner", "Generating implementation plan", phase=1)
 
     try:
-        # Use Claude CLI to generate plan
-        cmd = ["claude", "-p", prompt, "--output-format", "json"]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(project_dir),
+        # Use SpecialistRunner to execute A01-planner
+        runner = SpecialistRunner(project_dir)
+        
+        result = await asyncio.to_thread(
+            runner.create_agent("A01-planner").run,
+            prompt
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=300,  # 5 minute timeout
-        )
+        if not result.success:
+            raise Exception(result.error or "Planning failed")
 
-        if process.returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            raise Exception(f"Claude CLI failed: {error_msg}")
-
-        output = stdout.decode()
+        output = result.output
 
         # Parse the plan from output
         plan = None
@@ -158,7 +111,7 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
 
         # Log success
         action_logger.log_agent_complete(
-            "claude",
+            "A01-planner",
             f"Plan generated: {plan.get('plan_name', 'Unknown')}",
             phase=1,
             duration_ms=duration_ms,
@@ -184,7 +137,7 @@ async def planning_node(state: WorkflowState) -> dict[str, Any]:
         logger.error(f"Planning failed: {e}")
 
         # Log error
-        action_logger.log_agent_error("claude", str(e), phase=1, exception=e)
+        action_logger.log_agent_error("A01-planner", str(e), phase=1, exception=e)
 
         phase_1.status = PhaseStatus.FAILED
         phase_1.error = str(e)

@@ -71,6 +71,20 @@ from .worktree import (
     WorktreeError,
     WorktreeInfo,
 )
+from .uat_generator import (
+    UATDocument,
+    UATGenerator,
+    FileChange,
+    TestResults,
+    create_uat_generator,
+    generate_uat_from_verification,
+)
+from .checkpoint import (
+    Checkpoint,
+    CheckpointManager,
+    create_checkpoint_manager,
+    quick_checkpoint,
+)
 
 __all__ = [
     # State management
@@ -144,4 +158,16 @@ __all__ = [
     "WorktreeManager",
     "WorktreeError",
     "WorktreeInfo",
+    # UAT generator (GSD pattern)
+    "UATDocument",
+    "UATGenerator",
+    "FileChange",
+    "TestResults",
+    "create_uat_generator",
+    "generate_uat_from_verification",
+    # Checkpoint manager (GSD pattern)
+    "Checkpoint",
+    "CheckpointManager",
+    "create_checkpoint_manager",
+    "quick_checkpoint",
 ]

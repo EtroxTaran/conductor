@@ -407,3 +407,79 @@ def approval_gate_router(
 
     # Default to pre-implementation
     return "pre_implementation"
+
+
+# Discussion and Research phase routers (GSD pattern)
+
+def discuss_router(
+    state: WorkflowState,
+) -> Literal["discuss_complete", "human_escalation", "discuss_retry"]:
+    """Route after discussion phase.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        Next node name:
+        - "discuss_complete": Discussion complete, proceed to research
+        - "human_escalation": Needs clarification from user
+        - "discuss_retry": Retry discussion
+    """
+    decision = state.get("next_decision")
+
+    if decision == WorkflowDecision.ESCALATE or decision == "escalate":
+        return "human_escalation"
+
+    if state.get("discussion_complete"):
+        return "discuss_complete"
+
+    if state.get("needs_clarification"):
+        return "human_escalation"
+
+    # Check for errors
+    errors = state.get("errors", [])
+    discussion_errors = [e for e in errors if e.get("type") == "discussion_phase_error"]
+    if discussion_errors:
+        return "discuss_retry"
+
+    # Default: discussion complete
+    return "discuss_complete"
+
+
+def research_router(
+    state: WorkflowState,
+) -> Literal["research_complete", "human_escalation", "research_retry"]:
+    """Route after research phase.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        Next node name:
+        - "research_complete": Research complete, proceed to product validation
+        - "human_escalation": Critical research failure
+        - "research_retry": Retry research
+    """
+    decision = state.get("next_decision")
+
+    if decision == WorkflowDecision.ESCALATE or decision == "escalate":
+        return "human_escalation"
+
+    if state.get("research_complete"):
+        return "research_complete"
+
+    # Research errors are non-blocking - continue anyway
+    if state.get("research_errors"):
+        return "research_complete"
+
+    # Check for critical errors
+    errors = state.get("errors", [])
+    critical_errors = [
+        e for e in errors
+        if e.get("type") == "research_phase_error" and e.get("critical")
+    ]
+    if critical_errors:
+        return "human_escalation"
+
+    # Default: research complete (best-effort)
+    return "research_complete"

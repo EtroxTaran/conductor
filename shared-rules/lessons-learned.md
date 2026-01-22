@@ -2,7 +2,7 @@
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.4 -->
+<!-- Version: 1.5 -->
 <!-- Last Updated: 2026-01-22 -->
 
 ## How to Add a Lesson
@@ -16,6 +16,50 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - GSD and Ralph Wiggum Pattern Enhancements
+
+- **Issue**: Workflow lacked structured discussion phase before planning, no research agents, limited execution modes (no HITL), no token tracking, no checkpoint/rollback support, and no UAT document generation
+- **Root Cause**: Original implementation focused on basic workflow execution without incorporating proven patterns from GSD (Get Shit Done) and Ralph Wiggum methodologies
+- **Fix**: Implemented 12 key improvements across 4 phases:
+  1. **Discussion Phase**: Mandatory discussion before planning to capture developer preferences into CONTEXT.md
+  2. **Research Agents**: 2 parallel agents (tech_stack, existing_patterns) that analyze codebase before planning
+  3. **HITL vs AFK Modes**: ExecutionMode enum for Human-in-the-Loop (pause after each iteration) vs Away-from-Keyboard (autonomous)
+  4. **External Hook Scripts**: HookManager for pre/post iteration hooks, stop-check scripts for custom termination logic
+  5. **Token/Cost Tracking**: TokenMetrics and TokenUsageTracker for per-iteration cost monitoring with 75% context warning
+  6. **UAT Document Generation**: UATGenerator creates verification documents after each completed task
+  7. **Checkpoint Support**: CheckpointManager for manual state snapshots with rollback capability
+  8. **Handoff Brief Generation**: generate_handoff_node creates session resume documents before workflow ends
+  9. **CONTEXT.md Template**: Template for capturing library preferences, architecture decisions, testing philosophy
+  10. **Enhanced Ralph Loop**: HookConfig integration, token tracking, HITL pause support
+  11. **Workflow Integration**: Updated workflow graph to include discuss → research → product_validation path
+  12. **UAT in Verification**: verify_task.py generates UAT documents on task completion
+- **Prevention**:
+  - Always run discussion phase before planning for new projects
+  - Use HITL mode for exploratory or risky implementations
+  - Set cost limits to prevent runaway execution costs
+  - Create checkpoints before major changes
+  - Generate UAT documents for audit trail
+- **Applies To**: all
+- **Files Changed**:
+  - `orchestrator/langgraph/nodes/discuss_phase.py` (new)
+  - `orchestrator/langgraph/nodes/research_phase.py` (new)
+  - `orchestrator/langgraph/nodes/generate_handoff.py` (new)
+  - `orchestrator/langgraph/integrations/hooks.py` (new)
+  - `orchestrator/langgraph/integrations/ralph_loop.py` (enhanced with ExecutionMode, TokenMetrics, HookConfig)
+  - `orchestrator/langgraph/state.py` (added discussion, research, execution_mode, token_usage fields)
+  - `orchestrator/langgraph/workflow.py` (added discuss, research, generate_handoff nodes)
+  - `orchestrator/langgraph/routers/general.py` (added discuss_router, research_router)
+  - `orchestrator/langgraph/nodes/implement_task.py` (reads CONTEXT.md and research findings)
+  - `orchestrator/langgraph/nodes/verify_task.py` (generates UAT documents)
+  - `orchestrator/utils/uat_generator.py` (new)
+  - `orchestrator/utils/checkpoint.py` (new)
+  - `templates/CONTEXT.md.template` (new)
+  - `templates/UAT.md.template` (new)
+  - `tests/test_uat_generator.py` (new)
+  - `tests/test_checkpoint.py` (new)
+  - `tests/test_discuss_research_phases.py` (new)
+  - `tests/test_ralph_enhancements.py` (new)
 
 ### 2026-01-22 - Enhanced CLI Utilization for Quality and Automation
 

@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from orchestrator.dispatch import AgentDispatcher, DispatchResult, Task
 from orchestrator.registry import get_agent, get_agent_reviewers, AgentConfig
-from orchestrator.review.resolver import ConflictResolver, ConflictResolution
+from orchestrator.review.resolver import ConflictResolver, ResolutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class ReviewIteration:
     work_result: DispatchResult
     reviews: List[ReviewFeedback]
     decision: ReviewDecision
-    resolution: Optional[ConflictResolution] = None
+    resolution: Optional[ResolutionResult] = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
     @property
@@ -449,7 +449,7 @@ class ReviewCycle:
         self,
         reviews: List[ReviewFeedback],
         approval_score: float,
-    ) -> Tuple[ReviewDecision, Optional[ConflictResolution]]:
+    ) -> Tuple[ReviewDecision, Optional[ResolutionResult]]:
         """Determine the overall decision from reviews.
 
         Args:

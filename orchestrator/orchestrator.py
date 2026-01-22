@@ -91,6 +91,14 @@ class Orchestrator:
         # Initialize git operations manager for efficient batched git operations
         self.git = GitOperationsManager(self.project_dir)
 
+        # Initialize worktree manager and clean up any orphaned worktrees from previous runs
+        from .utils.worktree import WorktreeManager
+        self.worktree_manager = WorktreeManager(self.project_dir)
+        try:
+            self.worktree_manager.cleanup_orphaned_worktrees()
+        except Exception as e:
+            self.logger.warning(f"Failed to cleanup orphaned worktrees: {e}")
+
     def check_prerequisites(self) -> tuple[bool, list[str]]:
         """Check that all prerequisites are met.
 

@@ -19,13 +19,19 @@ from .general import (
     coverage_check_router,
     security_scan_router,
     approval_gate_router,
+    # Discussion and Research routers (GSD pattern)
+    discuss_router,
+    research_router,
 )
 from .task import (
     task_breakdown_router,
     select_task_router,
     implement_task_router,
+    implement_tasks_parallel_router,
     verify_task_router,
 )
+from .write_tests import write_tests_router
+from .fix_bug import fix_bug_router
 
 __all__ = [
     "validation_router",
@@ -42,9 +48,16 @@ __all__ = [
     "coverage_check_router",
     "security_scan_router",
     "approval_gate_router",
+    # Discussion and Research routers (GSD pattern)
+    "discuss_router",
+    "research_router",
     # Task loop routers
     "task_breakdown_router",
     "select_task_router",
     "implement_task_router",
+    "implement_tasks_parallel_router",
     "verify_task_router",
+    "verify_tasks_parallel_router",
+    "write_tests_router",
+    "fix_bug_router",
 ]

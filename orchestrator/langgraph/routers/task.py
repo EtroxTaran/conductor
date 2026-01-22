@@ -53,7 +53,7 @@ def task_breakdown_router(
 
 def select_task_router(
     state: WorkflowState,
-) -> Literal["implement_task", "build_verification", "human_escalation"]:
+) -> Literal["implement_task", "implement_tasks_parallel", "build_verification", "human_escalation"]:
     """Route after task selection.
 
     Args:
@@ -68,6 +68,12 @@ def select_task_router(
     decision = state.get("next_decision")
 
     if decision == WorkflowDecision.CONTINUE or decision == "continue":
+        current_task_ids = state.get("current_task_ids", [])
+        if current_task_ids:
+            if len(current_task_ids) > 1:
+                return "implement_tasks_parallel"
+            return "implement_task"
+
         current_task_id = state.get("current_task_id")
         if current_task_id:
             return "implement_task"
@@ -82,7 +88,14 @@ def select_task_router(
     if decision == WorkflowDecision.ESCALATE or decision == "escalate":
         return "human_escalation"
 
-    # Check for current task
+    # Check for current task batch
+    current_task_ids = state.get("current_task_ids", [])
+    if current_task_ids:
+        if len(current_task_ids) > 1:
+            return "implement_tasks_parallel"
+        return "implement_task"
+
+    # Check for current task (legacy)
     current_task_id = state.get("current_task_id")
     if current_task_id:
         return "implement_task"
@@ -123,6 +136,39 @@ def implement_task_router(
     current_task_id = state.get("current_task_id")
     if current_task_id:
         return "verify_task"
+
+    return "human_escalation"
+
+
+def implement_tasks_parallel_router(
+    state: WorkflowState,
+) -> Literal["verify_tasks_parallel", "implement_tasks_parallel", "human_escalation"]:
+    """Route after parallel task implementation.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        Next node name:
+        - "verify_tasks_parallel": Implementation done, verify batch
+        - "implement_tasks_parallel": Retry batch implementation
+        - "human_escalation": Implementation blocked/failed
+    """
+    decision = state.get("next_decision")
+
+    if decision == WorkflowDecision.CONTINUE or decision == "continue":
+        return "verify_tasks_parallel"
+
+    if decision == WorkflowDecision.RETRY or decision == "retry":
+        return "implement_tasks_parallel"
+
+    if decision == WorkflowDecision.ESCALATE or decision == "escalate":
+        return "human_escalation"
+
+    # Default to verification if batch exists
+    current_task_ids = state.get("current_task_ids", [])
+    if current_task_ids:
+        return "verify_tasks_parallel"
 
     return "human_escalation"
 
@@ -183,6 +229,38 @@ def verify_task_router(
         elif task.get("status") == TaskStatus.FAILED:
             return "human_escalation"
 
+    return _check_for_available_tasks_or_escalate(state, "select_task")
+
+
+def verify_tasks_parallel_router(
+    state: WorkflowState,
+) -> Literal["select_task", "implement_tasks_parallel", "human_escalation"]:
+    """Route after parallel task verification (batch loop).
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        Next node name:
+        - "select_task": Batch verified, select next batch
+        - "implement_tasks_parallel": Retry failed tasks in batch
+        - "human_escalation": Verification failed, need human help
+    """
+    decision = state.get("next_decision")
+
+    if decision == WorkflowDecision.CONTINUE or decision == "continue":
+        return _check_for_available_tasks_or_escalate(state, "select_task")
+
+    if decision == WorkflowDecision.RETRY or decision == "retry":
+        current_task_ids = state.get("current_task_ids", [])
+        if current_task_ids:
+            return "implement_tasks_parallel"
+        return "human_escalation"
+
+    if decision == WorkflowDecision.ESCALATE or decision == "escalate":
+        return "human_escalation"
+
+    # Default: if no batch, loop back to selection
     return _check_for_available_tasks_or_escalate(state, "select_task")
 
 

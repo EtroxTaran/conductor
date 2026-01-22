@@ -345,6 +345,17 @@ Project configuration (auto-created):
 - Workflow settings
 - Integration configs (e.g., Linear)
 
+Example workflow settings:
+```json
+{
+  "workflow": {
+    "parallel_workers": 3,
+    "review_gating": "conservative"
+  }
+}
+```
+`review_gating` is conservative by default: skip reviews only for docs-only changes.
+
 ### .workflow/
 Workflow state managed by orchestrator:
 - `state.json` - Current workflow state

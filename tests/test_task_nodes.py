@@ -345,6 +345,20 @@ class TestSelectTaskNode:
         assert "T3" in summary["completed"]
         assert summary["current_task_id"] == "T2"
 
+    def test_select_independent_tasks(self):
+        """Test selecting independent tasks by file sets."""
+        from orchestrator.langgraph.nodes.select_task import _select_independent_tasks
+
+        tasks = [
+            {"id": "T1", "files_to_create": ["src/a.py"], "files_to_modify": []},
+            {"id": "T2", "files_to_create": [], "files_to_modify": ["src/a.py"]},
+            {"id": "T3", "files_to_create": [], "files_to_modify": ["src/b.py"]},
+        ]
+
+        selected = _select_independent_tasks(tasks, 2)
+
+        assert [t["id"] for t in selected] == ["T1", "T3"]
+
 
 # =============================================================================
 # Test Task Routers
@@ -387,6 +401,19 @@ class TestTaskRouters:
         }
         result = select_task_router(state)
         assert result == "implement_task"
+
+    def test_select_task_router_parallel(self):
+        """Test routing from select to parallel implement."""
+        from orchestrator.langgraph.routers.task import select_task_router
+
+        state = {
+            "next_decision": "continue",
+            "current_task_ids": ["T1", "T2"],
+            "tasks": [{"id": "T1"}, {"id": "T2"}],
+            "completed_task_ids": [],
+        }
+        result = select_task_router(state)
+        assert result == "implement_tasks_parallel"
 
     def test_select_task_router_all_done(self):
         """Test routing when all tasks done."""
@@ -566,10 +593,14 @@ class TestInitialStateWithTasks:
         assert "tasks" in state
         assert "milestones" in state
         assert "current_task_id" in state
+        assert "current_task_ids" in state
+        assert "in_flight_task_ids" in state
         assert "completed_task_ids" in state
         assert "failed_task_ids" in state
         assert state["tasks"] == []
         assert state["milestones"] == []
+        assert state["current_task_ids"] == []
+        assert state["in_flight_task_ids"] == []
 
     def test_workflow_summary_includes_tasks(self):
         """Test workflow summary includes task info."""

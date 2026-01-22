@@ -1,0 +1,49 @@
+# Project Context
+
+This file captures developer preferences and project-specific decisions.
+It is generated during the discussion phase and used by workers during implementation.
+
+## Library Preferences
+
+List specific libraries to use or avoid:
+- Example: Use date-fns instead of moment.js
+- Example: Prefer axios over fetch
+- Example: Use zod for schema validation
+
+## Architectural Decisions
+
+Describe the architectural patterns to follow:
+- Example: Repository pattern for data access
+- Example: Service layer for business logic
+- Example: Feature-based folder structure
+
+## Testing Philosophy
+
+Define testing requirements and preferences:
+- Example: Write integration tests for API endpoints
+- Example: Use React Testing Library for component tests
+- Example: Maintain 80% code coverage for business logic
+
+## Code Style
+
+Code style preferences beyond linting rules:
+- Example: Prefer early returns over nested conditions
+- Example: Use named exports instead of default exports
+- Example: Keep functions under 50 lines
+
+## Error Handling
+
+How errors should be handled:
+- Example: Use custom error classes with error codes
+- Example: Log errors with full context
+- Example: Use Result types for expected failures
+
+## Additional Notes
+
+Any other relevant information for implementation:
+- Example: This project requires Node.js 18+
+- Example: All dates should be stored in UTC
+
+---
+*This template is used to generate CONTEXT.md during the discussion phase.*
+*Replace example content with actual project preferences.*

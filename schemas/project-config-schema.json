@@ -144,6 +144,19 @@
           },
           "default": [],
           "uniqueItems": true
+        },
+        "parallel_workers": {
+          "type": "integer",
+          "description": "Maximum parallel workers for task implementation",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 1
+        },
+        "review_gating": {
+          "type": "string",
+          "description": "Review gating policy for verification (docs-only skip)",
+          "enum": ["conservative", "disabled"],
+          "default": "conservative"
         }
       },
       "additionalProperties": false

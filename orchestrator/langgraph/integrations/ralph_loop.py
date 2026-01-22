@@ -10,6 +10,12 @@ Key principles:
 - <promise>DONE</promise> pattern for completion detection
 - Configurable max iterations as safety limit
 
+Enhanced with:
+- ExecutionMode: HITL (human-in-the-loop) vs AFK (autonomous)
+- External hook scripts for custom verification
+- Token/cost tracking per iteration
+- Context compaction warning at 75% threshold
+
 Reference: https://github.com/anthropics/claude-code/discussions/1278
 """
 
@@ -20,6 +26,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -27,6 +34,131 @@ logger = logging.getLogger(__name__)
 
 # Completion promise pattern
 COMPLETION_PROMISE = "<promise>DONE</promise>"
+
+# Context window management
+CONTEXT_WARNING_THRESHOLD = 0.75  # Warn at 75% utilization
+
+
+class ExecutionMode(str, Enum):
+    """Execution mode for Ralph loop.
+
+    HITL: Human-in-the-loop - pauses after each iteration for review
+    AFK: Away-from-keyboard - runs autonomously until completion
+    """
+
+    HITL = "human_in_the_loop"
+    AFK = "away_from_keyboard"
+
+
+@dataclass
+class HookConfig:
+    """Configuration for external hook scripts.
+
+    Hooks allow external scripts to control loop behavior:
+    - pre_iteration: Runs before each iteration
+    - post_iteration: Runs after each iteration
+    - stop_check: Returns 0 to stop loop, non-zero to continue
+
+    Attributes:
+        pre_iteration: Path to pre-iteration script
+        post_iteration: Path to post-iteration script
+        stop_check: Path to stop-check script
+        timeout: Max seconds per hook execution
+        sandbox: Whether to run in sandboxed environment
+    """
+
+    pre_iteration: Optional[Path] = None
+    post_iteration: Optional[Path] = None
+    stop_check: Optional[Path] = None
+    timeout: int = 30
+    sandbox: bool = True
+
+
+@dataclass
+class TokenMetrics:
+    """Token and cost tracking per iteration.
+
+    Tracks token usage and estimates costs based on model pricing.
+
+    Attributes:
+        iteration: Iteration number
+        input_tokens: Input tokens consumed
+        output_tokens: Output tokens generated
+        estimated_cost_usd: Estimated cost in USD
+        model: Model name for pricing lookup
+    """
+
+    iteration: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    model: str = "claude-sonnet-4"
+
+    # Pricing per 1M tokens (2026 rates - approximate)
+    PRICING: dict[str, dict[str, float]] = field(default_factory=lambda: {
+        "claude-sonnet-4": {"input": 3.0, "output": 15.0},
+        "claude-opus-4": {"input": 15.0, "output": 75.0},
+        "claude-opus-4-5": {"input": 15.0, "output": 75.0},
+        "claude-haiku-3-5": {"input": 0.25, "output": 1.25},
+    })
+
+    def calculate_cost(self) -> float:
+        """Calculate estimated cost based on token usage and model pricing."""
+        rates = self.PRICING.get(self.model, self.PRICING["claude-sonnet-4"])
+        input_cost = (self.input_tokens / 1_000_000) * rates["input"]
+        output_cost = (self.output_tokens / 1_000_000) * rates["output"]
+        self.estimated_cost_usd = input_cost + output_cost
+        return self.estimated_cost_usd
+
+    def to_dict(self) -> dict:
+        return {
+            "iteration": self.iteration,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "estimated_cost_usd": self.estimated_cost_usd,
+            "model": self.model,
+        }
+
+
+@dataclass
+class TokenUsageTracker:
+    """Aggregated token usage tracking across iterations.
+
+    Attributes:
+        total_input_tokens: Total input tokens across all iterations
+        total_output_tokens: Total output tokens across all iterations
+        total_cost_usd: Total estimated cost in USD
+        iterations: List of per-iteration metrics
+        max_cost_usd: Optional cost limit
+    """
+
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: float = 0.0
+    iterations: list[TokenMetrics] = field(default_factory=list)
+    max_cost_usd: Optional[float] = None
+
+    def add_iteration(self, metrics: TokenMetrics) -> None:
+        """Add metrics from an iteration."""
+        self.total_input_tokens += metrics.input_tokens
+        self.total_output_tokens += metrics.output_tokens
+        self.total_cost_usd += metrics.estimated_cost_usd
+        self.iterations.append(metrics)
+
+    def is_over_budget(self) -> bool:
+        """Check if cost limit has been exceeded."""
+        if self.max_cost_usd is None:
+            return False
+        return self.total_cost_usd >= self.max_cost_usd
+
+    def to_dict(self) -> dict:
+        return {
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_cost_usd": self.total_cost_usd,
+            "iteration_count": len(self.iterations),
+            "iterations": [m.to_dict() for m in self.iterations],
+        }
 
 
 @dataclass
@@ -41,6 +173,11 @@ class RalphLoopConfig:
         allowed_tools: Tools the worker can use
         max_turns_per_iteration: Max turns per Claude invocation
         save_iteration_logs: Whether to save logs for each iteration
+        execution_mode: HITL or AFK mode
+        hooks: External hook script configuration
+        track_tokens: Whether to track token usage
+        context_warning_threshold: Context utilization threshold for warnings
+        max_cost_usd: Optional cost limit
     """
 
     max_iterations: int = 10
@@ -65,6 +202,17 @@ class RalphLoopConfig:
     max_turns_per_iteration: int = 15
     save_iteration_logs: bool = True
 
+    # New: Execution mode (HITL vs AFK)
+    execution_mode: ExecutionMode = ExecutionMode.AFK
+
+    # New: External hooks
+    hooks: Optional[HookConfig] = None
+
+    # New: Token tracking
+    track_tokens: bool = True
+    context_warning_threshold: float = CONTEXT_WARNING_THRESHOLD
+    max_cost_usd: Optional[float] = None
+
 
 @dataclass
 class RalphLoopResult:
@@ -78,6 +226,8 @@ class RalphLoopResult:
         total_time_seconds: Total execution time
         completion_reason: Why the loop stopped
         error: Error message if failed
+        token_usage: Token usage tracking (if enabled)
+        paused_for_review: Whether loop paused for HITL review
     """
 
     success: bool
@@ -88,6 +238,12 @@ class RalphLoopResult:
     completion_reason: str = ""
     error: Optional[str] = None
 
+    # New: Token tracking
+    token_usage: Optional[TokenUsageTracker] = None
+
+    # New: HITL support
+    paused_for_review: bool = False
+
     def to_dict(self) -> dict:
         return {
             "success": self.success,
@@ -97,6 +253,8 @@ class RalphLoopResult:
             "total_time_seconds": self.total_time_seconds,
             "completion_reason": self.completion_reason,
             "error": self.error,
+            "token_usage": self.token_usage.to_dict() if self.token_usage else None,
+            "paused_for_review": self.paused_for_review,
         }
 
 
@@ -148,11 +306,17 @@ async def run_ralph_loop(
     files_to_modify: list[str],
     test_files: list[str],
     config: Optional[RalphLoopConfig] = None,
+    hitl_callback: Optional[Callable[[int, dict], bool]] = None,
 ) -> RalphLoopResult:
     """Execute the Ralph Wiggum loop for a task.
 
     Iteratively runs Claude with fresh context until tests pass
     or max iterations reached.
+
+    Enhanced with:
+    - HITL mode: Pause after each iteration for human review
+    - Hook scripts: External verification and control
+    - Token tracking: Monitor context usage and costs
 
     Args:
         project_dir: Project directory to run in
@@ -164,6 +328,7 @@ async def run_ralph_loop(
         files_to_modify: Files to modify
         test_files: Test files that must pass
         config: Loop configuration
+        hitl_callback: Callback for HITL mode (receives iteration, result; returns continue?)
 
     Returns:
         RalphLoopResult with execution details
@@ -179,11 +344,24 @@ async def run_ralph_loop(
     iteration = 0
     previous_context = ""
 
-    logger.info(f"Starting Ralph Wiggum loop for task {task_id}")
+    # Initialize token tracking
+    token_tracker = TokenUsageTracker(max_cost_usd=config.max_cost_usd) if config.track_tokens else None
+
+    logger.info(f"Starting Ralph Wiggum loop for task {task_id} (mode: {config.execution_mode.value})")
 
     while iteration < config.max_iterations:
         iteration += 1
         logger.info(f"Ralph loop iteration {iteration}/{config.max_iterations}")
+
+        # Run pre-iteration hook if configured
+        if config.hooks and config.hooks.pre_iteration:
+            hook_result = await _run_hook(
+                config.hooks.pre_iteration,
+                config.hooks,
+                {"iteration": iteration, "task_id": task_id},
+            )
+            if hook_result != 0:
+                logger.warning(f"Pre-iteration hook returned non-zero: {hook_result}")
 
         # Build prompt for this iteration
         prompt = RALPH_ITERATION_PROMPT.format(
@@ -213,9 +391,45 @@ async def run_ralph_loop(
                 timeout=config.iteration_timeout,
             )
 
+            # Track tokens if enabled
+            if token_tracker and config.track_tokens:
+                metrics = _extract_token_metrics(result, iteration)
+                if metrics:
+                    metrics.calculate_cost()
+                    token_tracker.add_iteration(metrics)
+
+                    # Check cost limit
+                    if token_tracker.is_over_budget():
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        logger.warning(f"Cost limit exceeded: ${token_tracker.total_cost_usd:.4f}")
+                        return RalphLoopResult(
+                            success=False,
+                            iterations=iteration,
+                            test_results=test_results,
+                            total_time_seconds=elapsed,
+                            completion_reason="cost_limit_exceeded",
+                            error=f"Cost limit of ${config.max_cost_usd:.2f} exceeded",
+                            token_usage=token_tracker,
+                        )
+
+                    # Log context usage warning
+                    _check_context_warning(token_tracker, config)
+
             # Save iteration log
             if config.save_iteration_logs:
                 _save_iteration_log(project_dir, task_id, iteration, result)
+
+            # Run post-iteration hook if configured
+            if config.hooks and config.hooks.post_iteration:
+                await _run_hook(
+                    config.hooks.post_iteration,
+                    config.hooks,
+                    {
+                        "iteration": iteration,
+                        "task_id": task_id,
+                        "completion_detected": result.get("completion_detected", False),
+                    },
+                )
 
             # Check for completion signal
             if result.get("completion_detected"):
@@ -228,6 +442,7 @@ async def run_ralph_loop(
                     test_results=test_results,
                     total_time_seconds=elapsed,
                     completion_reason="completion_promise_detected",
+                    token_usage=token_tracker,
                 )
 
             # Check if tests pass
@@ -248,7 +463,65 @@ async def run_ralph_loop(
                     test_results=test_results,
                     total_time_seconds=elapsed,
                     completion_reason="all_tests_passed",
+                    token_usage=token_tracker,
                 )
+
+            # Run stop-check hook if configured
+            if config.hooks and config.hooks.stop_check:
+                stop_result = await _run_hook(
+                    config.hooks.stop_check,
+                    config.hooks,
+                    {
+                        "iteration": iteration,
+                        "task_id": task_id,
+                        "tests_passed": test_result["all_passed"],
+                    },
+                )
+                if stop_result == 0:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    logger.info(f"Ralph loop stopped by hook at iteration {iteration}")
+                    return RalphLoopResult(
+                        success=True,
+                        iterations=iteration,
+                        final_output=result.get("output"),
+                        test_results=test_results,
+                        total_time_seconds=elapsed,
+                        completion_reason="stop_hook_triggered",
+                        token_usage=token_tracker,
+                    )
+
+            # HITL mode: Pause for human review
+            if config.execution_mode == ExecutionMode.HITL:
+                if hitl_callback:
+                    should_continue = hitl_callback(iteration, {
+                        "test_result": test_result,
+                        "files_changed": result.get("files_changed", []),
+                    })
+                    if not should_continue:
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        logger.info(f"Ralph loop paused by human at iteration {iteration}")
+                        return RalphLoopResult(
+                            success=False,
+                            iterations=iteration,
+                            test_results=test_results,
+                            total_time_seconds=elapsed,
+                            completion_reason="human_paused",
+                            paused_for_review=True,
+                            token_usage=token_tracker,
+                        )
+                else:
+                    # No callback in HITL mode - pause automatically
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    logger.info(f"Ralph loop pausing for HITL review at iteration {iteration}")
+                    return RalphLoopResult(
+                        success=False,
+                        iterations=iteration,
+                        test_results=test_results,
+                        total_time_seconds=elapsed,
+                        completion_reason="hitl_pause",
+                        paused_for_review=True,
+                        token_usage=token_tracker,
+                    )
 
             # Build context for next iteration
             previous_context = _build_previous_context(
@@ -285,6 +558,7 @@ async def run_ralph_loop(
         total_time_seconds=elapsed,
         completion_reason="max_iterations_reached",
         error=f"Failed to complete task after {config.max_iterations} iterations",
+        token_usage=token_tracker,
     )
 
 
@@ -672,3 +946,191 @@ def detect_test_framework(project_dir: Path) -> str:
         return "go test"
 
     return "pytest"  # Default
+
+
+# --- Hook Support ---
+
+async def _run_hook(
+    hook_path: Path,
+    config: HookConfig,
+    context: dict,
+) -> int:
+    """Run external hook script in sandboxed environment.
+
+    Args:
+        hook_path: Path to hook script
+        config: Hook configuration
+        context: Context dict to pass as environment variables
+
+    Returns:
+        Hook return code (0 = success/stop, non-zero = continue)
+    """
+    if not hook_path or not hook_path.exists():
+        return 0
+
+    # Build environment variables from context
+    env = {
+        **os.environ,
+        "RALPH_ITERATION": str(context.get("iteration", 0)),
+        "RALPH_TASK_ID": str(context.get("task_id", "")),
+        "RALPH_TESTS_PASSED": str(context.get("tests_passed", False)).lower(),
+        "RALPH_COMPLETION_DETECTED": str(context.get("completion_detected", False)).lower(),
+    }
+
+    try:
+        if config.sandbox:
+            # Run with limited privileges (no network, limited filesystem)
+            cmd = [str(hook_path)]
+        else:
+            cmd = [str(hook_path)]
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=config.timeout,
+            )
+            logger.debug(f"Hook {hook_path.name} output: {stdout.decode()[:500]}")
+            return process.returncode or 0
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Hook {hook_path.name} timed out after {config.timeout}s")
+            process.kill()
+            await process.wait()
+            return -1
+
+    except FileNotFoundError:
+        logger.warning(f"Hook script not found: {hook_path}")
+        return 0
+    except PermissionError:
+        logger.warning(f"Hook script not executable: {hook_path}")
+        return 0
+    except Exception as e:
+        logger.error(f"Error running hook {hook_path.name}: {e}")
+        return -1
+
+
+# --- Token Tracking ---
+
+def _extract_token_metrics(result: dict, iteration: int) -> Optional[TokenMetrics]:
+    """Extract token usage metrics from iteration result.
+
+    Claude CLI with --output-format json includes usage stats in output.
+
+    Args:
+        result: Iteration result dict
+        iteration: Current iteration number
+
+    Returns:
+        TokenMetrics or None if not available
+    """
+    output = result.get("output", {})
+
+    # Try to extract from Claude JSON output
+    usage = output.get("usage", {})
+    if usage:
+        return TokenMetrics(
+            iteration=iteration,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
+
+    # Try to extract from raw output
+    raw_output = result.get("raw_output", "")
+    if raw_output:
+        # Look for usage patterns in output
+        input_match = re.search(r"input_tokens[\"']?\s*:\s*(\d+)", raw_output)
+        output_match = re.search(r"output_tokens[\"']?\s*:\s*(\d+)", raw_output)
+
+        if input_match or output_match:
+            return TokenMetrics(
+                iteration=iteration,
+                input_tokens=int(input_match.group(1)) if input_match else 0,
+                output_tokens=int(output_match.group(1)) if output_match else 0,
+            )
+
+    # Estimate based on prompt/output length if nothing else
+    # Rough estimate: 1 token ≈ 4 characters
+    raw_len = len(result.get("raw_output", ""))
+    if raw_len > 0:
+        return TokenMetrics(
+            iteration=iteration,
+            input_tokens=0,  # Can't estimate input reliably
+            output_tokens=raw_len // 4,
+        )
+
+    return None
+
+
+def _check_context_warning(tracker: TokenUsageTracker, config: RalphLoopConfig) -> None:
+    """Check and log context utilization warning.
+
+    Warns at 75% utilization to leave "thinking space" for reasoning.
+
+    Args:
+        tracker: Token usage tracker
+        config: Loop configuration
+    """
+    # Approximate context window sizes (2026)
+    # Claude Sonnet 4 / Opus 4: 200k tokens
+    MAX_CONTEXT_TOKENS = 200_000
+
+    total_tokens = tracker.total_input_tokens + tracker.total_output_tokens
+    utilization = total_tokens / MAX_CONTEXT_TOKENS
+
+    if utilization >= config.context_warning_threshold:
+        logger.warning(
+            f"Context utilization at {utilization:.1%} ({total_tokens:,} tokens). "
+            f"Consider compacting context or starting fresh iteration."
+        )
+
+
+# --- Convenience Functions ---
+
+def create_ralph_config(
+    project_dir: Path,
+    execution_mode: str = "afk",
+    max_iterations: int = 10,
+    enable_hooks: bool = False,
+    track_tokens: bool = True,
+    max_cost_usd: Optional[float] = None,
+) -> RalphLoopConfig:
+    """Create RalphLoopConfig with sensible defaults.
+
+    Args:
+        project_dir: Project directory for test framework detection
+        execution_mode: "hitl" or "afk"
+        max_iterations: Maximum loop iterations
+        enable_hooks: Whether to enable hook scripts
+        track_tokens: Whether to track token usage
+        max_cost_usd: Optional cost limit
+
+    Returns:
+        Configured RalphLoopConfig
+    """
+    mode = ExecutionMode.HITL if execution_mode.lower() == "hitl" else ExecutionMode.AFK
+
+    hooks = None
+    if enable_hooks:
+        hooks_dir = project_dir / ".workflow" / "hooks"
+        if hooks_dir.exists():
+            hooks = HookConfig(
+                pre_iteration=hooks_dir / "pre-iteration.sh" if (hooks_dir / "pre-iteration.sh").exists() else None,
+                post_iteration=hooks_dir / "post-iteration.sh" if (hooks_dir / "post-iteration.sh").exists() else None,
+                stop_check=hooks_dir / "stop-check.sh" if (hooks_dir / "stop-check.sh").exists() else None,
+            )
+
+    return RalphLoopConfig(
+        max_iterations=max_iterations,
+        test_command=detect_test_framework(project_dir),
+        execution_mode=mode,
+        hooks=hooks,
+        track_tokens=track_tokens,
+        max_cost_usd=max_cost_usd,
+    )

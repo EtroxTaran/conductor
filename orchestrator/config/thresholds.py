@@ -57,6 +57,8 @@ class WorkflowConfig:
     """Configuration for workflow behavior."""
     features: WorkflowFeatures = field(default_factory=WorkflowFeatures)
     approval_phases: list[int] = field(default_factory=list)  # Phases requiring human approval
+    parallel_workers: int = 1
+    review_gating: str = "conservative"
 
 
 @dataclass
@@ -97,6 +99,8 @@ class ProjectConfig:
                     "approval_gates": self.workflow.features.approval_gates,
                 },
                 "approval_phases": self.workflow.approval_phases,
+                "parallel_workers": self.workflow.parallel_workers,
+                "review_gating": self.workflow.review_gating,
             },
         }
 
@@ -319,6 +323,10 @@ def _merge_config(base: ProjectConfig, custom: dict) -> ProjectConfig:
                 base.workflow.features.approval_gates = bool(f["approval_gates"])
         if "approval_phases" in w:
             base.workflow.approval_phases = list(w["approval_phases"])
+        if "parallel_workers" in w:
+            base.workflow.parallel_workers = max(1, int(w["parallel_workers"]))
+        if "review_gating" in w:
+            base.workflow.review_gating = str(w["review_gating"])
 
     return base
 

@@ -863,6 +863,29 @@ consensus = resolver.get_consensus_recommendation(
 
 ---
 
+## Workflow Configuration
+
+Configure workflow behavior in `.project-config.json`:
+
+```json
+{
+  "workflow": {
+    "parallel_workers": 3,
+    "review_gating": "conservative",
+    "features": {
+      "build_verification": true,
+      "coverage_check": true,
+      "security_scan": true
+    }
+  }
+}
+```
+
+- `parallel_workers`: Maximum number of tasks to implement in parallel (requires git worktrees)
+- `review_gating`: `conservative` skips reviews only for docs-only changes; `disabled` always runs reviews
+
+---
+
 ## Troubleshooting
 
 ### Agent CLI Not Found

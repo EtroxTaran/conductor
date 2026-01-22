@@ -11,6 +11,7 @@ Ralph Wiggum mode is recommended when tests already exist (TDD workflow).
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ from ..integrations import (
 from ..integrations.board_sync import sync_board
 from ...specialists.runner import SpecialistRunner
 from ...cleanup import CleanupManager
+from ...utils.worktree import WorktreeManager, WorktreeError
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +158,214 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
             updated_task=updated_task,
             project_dir=project_dir,
         )
+
+
+async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
+    """Implement a batch of tasks in parallel using git worktrees.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        State updates with task implementation results
+    """
+    task_ids = state.get("current_task_ids", [])
+    if not task_ids:
+        return {
+            "errors": [{
+                "type": "implement_task_error",
+                "message": "No task batch selected for implementation",
+                "timestamp": datetime.now().isoformat(),
+            }],
+            "next_decision": "escalate",
+        }
+
+    project_dir = Path(state["project_dir"])
+    tasks = []
+    for task_id in task_ids:
+        task = get_task_by_id(state, task_id)
+        if not task:
+            return {
+                "errors": [{
+                    "type": "implement_task_error",
+                    "message": f"Task {task_id} not found",
+                    "timestamp": datetime.now().isoformat(),
+                }],
+                "next_decision": "escalate",
+            }
+        tasks.append(task)
+
+    # Update task attempt counts and statuses
+    updated_tasks = []
+    for task in tasks:
+        updated = dict(task)
+        updated["attempts"] = updated.get("attempts", 0) + 1
+        updated["status"] = TaskStatus.IN_PROGRESS
+        updated_tasks.append(updated)
+        _update_task_trackers(project_dir, updated["id"], TaskStatus.IN_PROGRESS)
+
+    results: list[dict] = []
+    errors: list[dict] = []
+    failed_task_ids: list[str] = []
+    retry_task_ids: list[str] = []
+    should_escalate = False
+
+    try:
+        with WorktreeManager(project_dir) as wt_manager:
+            worktrees = []
+
+            for task in tasks:
+                try:
+                    worktree = wt_manager.create_worktree(task.get("id", "task"))
+                    worktrees.append((worktree, task))
+                except WorktreeError as e:
+                    logger.error(f"Failed to create worktree for task {task.get('id')}: {e}")
+                    errors.append({
+                        "type": "worktree_error",
+                        "task_id": task.get("id"),
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                    should_escalate = True
+
+            if should_escalate:
+                return {
+                    "tasks": updated_tasks,
+                    "errors": errors,
+                    "next_decision": "escalate",
+                    "updated_at": datetime.now().isoformat(),
+                }
+
+            # Execute tasks in parallel
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(worktrees)) as executor:
+                futures = [
+                    loop.run_in_executor(
+                        executor,
+                        _run_task_in_worktree,
+                        worktree,
+                        task,
+                        state,
+                    )
+                    for worktree, task in worktrees
+                ]
+
+                completed = await asyncio.gather(*futures, return_exceptions=True)
+
+            # Process results and merge sequentially
+            for (worktree, task), result in zip(worktrees, completed):
+                task_id = task.get("id", "unknown")
+
+                if isinstance(result, Exception):
+                    logger.error(f"Task {task_id} failed in worktree: {result}")
+                    result = {
+                        "success": False,
+                        "error": str(result),
+                        "output": None,
+                    }
+
+                if result.get("success"):
+                    try:
+                        commit_msg = f"Task: {task.get('title', task_id)}"
+                        wt_manager.merge_worktree(worktree, commit_msg)
+                    except WorktreeError as e:
+                        logger.error(f"Failed to merge worktree for task {task_id}: {e}")
+                        result = {
+                            "success": False,
+                            "error": str(e),
+                            "output": result.get("output"),
+                        }
+
+                results.append({"task_id": task_id, **result})
+
+    except WorktreeError as e:
+        logger.error(f"Parallel implementation failed: {e}")
+        return {
+            "tasks": updated_tasks,
+            "errors": [{
+                "type": "worktree_error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }],
+            "next_decision": "escalate",
+            "updated_at": datetime.now().isoformat(),
+        }
+
+    # Apply task-level updates based on results
+    updated_tasks_map = {t["id"]: t for t in updated_tasks}
+    for result in results:
+        task_id = result["task_id"]
+        task = updated_tasks_map.get(task_id, {"id": task_id})
+
+        if result.get("success"):
+            output = _parse_task_output(result.get("output", ""), task_id)
+
+            if output.get("status") == "needs_clarification":
+                task["status"] = TaskStatus.BLOCKED
+                task["error"] = f"Needs clarification: {output.get('question', 'Unknown')}"
+                _save_clarification_request(project_dir, task_id, output)
+                errors.append({
+                    "type": "task_clarification_needed",
+                    "task_id": task_id,
+                    "question": output.get("question"),
+                    "options": output.get("options", []),
+                    "timestamp": datetime.now().isoformat(),
+                })
+                should_escalate = True
+                continue
+
+            _save_task_result(project_dir, task_id, output)
+            task["implementation_notes"] = output.get("implementation_notes", "")
+        else:
+            error_message = result.get("error") or "Task implementation failed"
+            task_update = _handle_task_error(task, error_message)
+
+            # Capture updates from error handler
+            task = task_update["tasks"][0]
+            errors.extend(task_update.get("errors", []))
+            failed_task_ids.extend(task_update.get("failed_task_ids", []))
+
+            if task_update.get("next_decision") == "retry":
+                retry_task_ids.append(task_id)
+            else:
+                should_escalate = True
+
+        updated_tasks_map[task_id] = task
+
+    # Sync to Kanban board
+    try:
+        tasks = state.get("tasks", [])
+        updated_task_ids = set(updated_tasks_map.keys())
+        updated_tasks_list = [t for t in tasks if t["id"] not in updated_task_ids] + list(updated_tasks_map.values())
+        sync_state = dict(state)
+        sync_state["tasks"] = updated_tasks_list
+        sync_board(sync_state)
+    except Exception as e:
+        logger.warning(f"Failed to sync board in parallel implement: {e}")
+
+    next_decision = "continue"
+    current_task_ids = []
+    in_flight_task_ids = []
+    current_task_id = None
+
+    if should_escalate:
+        next_decision = "escalate"
+    elif retry_task_ids:
+        next_decision = "retry"
+        current_task_ids = retry_task_ids
+        in_flight_task_ids = retry_task_ids
+        current_task_id = retry_task_ids[0]
+
+    return {
+        "tasks": list(updated_tasks_map.values()),
+        "failed_task_ids": failed_task_ids,
+        "errors": errors,
+        "current_task_id": current_task_id,
+        "current_task_ids": current_task_ids,
+        "in_flight_task_ids": in_flight_task_ids,
+        "next_decision": next_decision,
+        "updated_at": datetime.now().isoformat(),
+    }
 
 
 def _should_use_ralph_loop(task: Task, project_dir: Path) -> bool:
@@ -312,13 +522,8 @@ async def _implement_standard(
     """
     task_id = task["id"]
 
-    # Build prompt using scoped context
-    prompt = build_scoped_prompt(task)
-
-    # Load any clarification answers
-    clarification_answers = _load_task_clarification_answers(project_dir, task_id)
-    if clarification_answers:
-        prompt += f"\n\nCLARIFICATION ANSWERS:\n{json.dumps(clarification_answers, indent=2)}"
+    # Build prompt using scoped or full context
+    prompt = build_task_prompt(task, state, project_dir)
 
     try:
         # Use SpecialistRunner to execute A04-implementer
@@ -449,6 +654,269 @@ def build_scoped_prompt(task: Task) -> str:
             f"- {f}" for f in task.get("test_files", [])
         ) or "- None",
     )
+
+
+def build_full_prompt(task: Task, state: Optional[WorkflowState] = None) -> str:
+    """Build a full prompt when file lists are not specified."""
+    completed_context = _build_completed_context(state) if state else ""
+    description = task.get("description", task.get("title", "Unknown task"))
+    user_story = task.get("user_story", "No user story provided")
+    dependencies = task.get("dependencies", [])
+
+    prompt = f"""## Task
+{description}
+
+## User Story
+{user_story}
+
+## Acceptance Criteria
+{_format_criteria(task.get("acceptance_criteria", []))}
+
+## Dependencies
+{_format_files(dependencies)}
+
+## Files to Create
+{_format_files(task.get("files_to_create", []))}
+
+## Files to Modify
+{_format_files(task.get("files_to_modify", []))}
+
+## Test Files
+{_format_files(task.get("test_files", []))}
+"""
+
+    if completed_context:
+        prompt += f"\n{completed_context}\n"
+
+    prompt += f"""
+## Instructions
+1. Implement using TDD (write/update tests first)
+2. Follow existing code patterns in the project
+3. Do NOT read orchestration files (.workflow/, plan.json)
+4. Signal completion with: <promise>DONE</promise>
+
+## Output
+When complete, output a JSON object:
+{{
+    "task_id": "{task.get("id", "unknown")}",
+    "status": "completed",
+    "files_created": [],
+    "files_modified": [],
+    "tests_written": [],
+    "tests_passed": true,
+    "implementation_notes": "Brief notes"
+}}
+"""
+
+    return prompt.strip()
+
+
+def build_task_prompt(
+    task: Task,
+    state: Optional[WorkflowState],
+    project_dir: Path,
+) -> str:
+    """Build a task prompt, preferring scoped context when files are listed.
+
+    Includes CONTEXT.md preferences when available to guide implementation.
+    """
+    has_file_scope = bool(
+        task.get("files_to_create") or task.get("files_to_modify") or task.get("test_files")
+    )
+
+    prompt = build_scoped_prompt(task) if has_file_scope else build_full_prompt(task, state)
+
+    # Include CONTEXT.md preferences (GSD pattern)
+    context_preferences = _load_context_preferences(project_dir)
+    if context_preferences:
+        prompt += f"\n\n## Project Context (from CONTEXT.md)\n{context_preferences}"
+
+    # Include research findings if available
+    research_findings = _load_research_findings(project_dir)
+    if research_findings:
+        prompt += f"\n\n## Research Findings\n{research_findings}"
+
+    diff_context = _build_diff_context(project_dir, task)
+    if diff_context:
+        prompt += f"\n\n## Diff Context\n```diff\n{diff_context}\n```"
+
+    clarification_answers = _load_task_clarification_answers(project_dir, task.get("id", "unknown"))
+    if clarification_answers:
+        prompt += f"\n\nCLARIFICATION ANSWERS:\n{json.dumps(clarification_answers, indent=2)}"
+
+    return prompt
+
+
+def _load_context_preferences(project_dir: Path) -> str:
+    """Load developer preferences from CONTEXT.md.
+
+    Args:
+        project_dir: Project directory
+
+    Returns:
+        Formatted preferences string or empty string
+    """
+    context_file = project_dir / "CONTEXT.md"
+    if not context_file.exists():
+        return ""
+
+    try:
+        content = context_file.read_text()
+
+        # Extract key sections
+        sections_to_include = [
+            "## Library Preferences",
+            "## Architectural Decisions",
+            "## Testing Philosophy",
+            "## Code Style",
+            "## Error Handling",
+        ]
+
+        extracted = []
+        for section in sections_to_include:
+            if section in content:
+                section_start = content.find(section)
+                next_section = content.find("##", section_start + len(section))
+                if next_section == -1:
+                    section_content = content[section_start:]
+                else:
+                    section_content = content[section_start:next_section]
+
+                # Clean up section content
+                section_content = section_content.strip()
+                if section_content and "[TBD]" not in section_content:
+                    extracted.append(section_content)
+
+        if extracted:
+            return "\n\n".join(extracted)
+
+    except Exception as e:
+        logger.warning(f"Failed to load CONTEXT.md: {e}")
+
+    return ""
+
+
+def _load_research_findings(project_dir: Path) -> str:
+    """Load research findings from the research phase.
+
+    Args:
+        project_dir: Project directory
+
+    Returns:
+        Formatted research summary or empty string
+    """
+    findings_file = project_dir / ".workflow" / "phases" / "research" / "findings.json"
+    if not findings_file.exists():
+        return ""
+
+    try:
+        findings = json.loads(findings_file.read_text())
+
+        parts = []
+
+        # Tech stack
+        tech_stack = findings.get("tech_stack")
+        if tech_stack:
+            languages = tech_stack.get("languages", [])
+            frameworks = tech_stack.get("frameworks", [])
+            if languages:
+                parts.append(f"**Languages**: {', '.join(languages)}")
+            if frameworks:
+                fw_names = [f.get("name", str(f)) if isinstance(f, dict) else str(f) for f in frameworks]
+                parts.append(f"**Frameworks**: {', '.join(fw_names)}")
+
+        # Patterns
+        patterns = findings.get("existing_patterns")
+        if patterns:
+            arch = patterns.get("architecture")
+            if arch and arch != "unknown":
+                parts.append(f"**Architecture**: {arch}")
+
+            testing = patterns.get("testing", {})
+            if testing:
+                test_info = testing.get("framework") or testing.get("types")
+                if test_info:
+                    if isinstance(test_info, list):
+                        parts.append(f"**Testing**: {', '.join(test_info)}")
+                    else:
+                        parts.append(f"**Testing**: {test_info}")
+
+        if parts:
+            return "\n".join(parts)
+
+    except Exception as e:
+        logger.warning(f"Failed to load research findings: {e}")
+
+    return ""
+
+
+def _build_completed_context(state: Optional[WorkflowState]) -> str:
+    """Build context from completed tasks to help with continuity."""
+    if not state:
+        return ""
+
+    completed_ids = set(state.get("completed_task_ids", []))
+    if not completed_ids:
+        return ""
+
+    lines = ["## PREVIOUSLY COMPLETED TASKS"]
+    for task in state.get("tasks", []):
+        task_id = task.get("id")
+        if task_id in completed_ids:
+            notes = task.get("implementation_notes", "").strip()
+            note_line = f" - {notes}" if notes else ""
+            lines.append(f"- {task_id}: {task.get('title', 'Untitled')}{note_line}")
+
+    return "\n".join(lines)
+
+
+def _build_diff_context(project_dir: Path, task: Task, max_chars: int = 4000) -> str:
+    """Build git diff context for task-relevant files."""
+    import subprocess
+
+    files = []
+    for key in ("files_to_create", "files_to_modify", "test_files"):
+        files.extend(task.get(key, []) or [])
+
+    files = [f for f in files if f]
+    if not files:
+        return ""
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--"] + files,
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return ""
+
+        diff = result.stdout.strip()
+        if not diff:
+            return ""
+
+        return diff[:max_chars]
+    except Exception:
+        return ""
+
+
+def _run_task_in_worktree(
+    worktree_path: Path,
+    task: Task,
+    state: Optional[WorkflowState],
+) -> dict[str, Any]:
+    """Run a task implementation inside a worktree."""
+    runner = SpecialistRunner(worktree_path)
+    prompt = build_task_prompt(task, state, worktree_path)
+    result = runner.create_agent("A04-implementer").run(prompt)
+
+    return {
+        "success": result.success,
+        "output": result.output or "",
+        "error": result.error,
+    }
 
 
 def _load_task_clarification_answers(project_dir: Path, task_id: str) -> dict:
