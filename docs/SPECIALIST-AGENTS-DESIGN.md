@@ -1114,7 +1114,7 @@ BOARD_NODES = [
 ### New Project Structure
 
 ```
-meta-architect/
+conductor/
 ├── agents/                          # Agent definitions
 │   ├── A01-planner/
 │   │   ├── CLAUDE.md

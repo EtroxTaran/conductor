@@ -1,4 +1,4 @@
-# Meta-Architect: Multi-Agent Development System
+# Conductor: Multi-Agent Development System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -27,7 +27,7 @@ A **production-ready multi-agent orchestration system** that coordinates Claude 
 
 ## How It Works
 
-Meta-Architect solves the coordination problem for AI-assisted development by orchestrating three specialized agents through a proven workflow:
+Conductor solves the coordination problem for AI-assisted development by orchestrating three specialized agents through a proven workflow:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -372,7 +372,7 @@ pip install -e .           # Alternative: manual pip install
 
 ## Setting Up a New Project (Recommended)
 
-The recommended way to use meta-architect is as a **git submodule** in your project. This keeps meta-architect updateable and your project independent.
+The recommended way to use conductor is as a **git submodule** in your project. This keeps conductor updateable and your project independent.
 
 ### Quick Setup
 
@@ -389,9 +389,9 @@ curl -sL https://raw.githubusercontent.com/EtroxTaran/multi-agent-development/ma
 
 This will:
 1. Initialize a git repo (if needed)
-2. Add meta-architect as a submodule
+2. Add conductor as a submodule
 3. Create starter templates (PRODUCT.md, CLAUDE.md, etc.)
-4. Create convenience scripts (run-workflow.sh, update-meta-architect.sh)
+4. Create convenience scripts (run-workflow.sh, update-conductor.sh)
 
 ### Manual Setup
 
@@ -400,12 +400,12 @@ This will:
 mkdir my-project && cd my-project
 git init
 
-# 2. Add meta-architect as submodule
-git submodule add https://github.com/EtroxTaran/multi-agent-development.git meta-architect
+# 2. Add conductor as submodule
+git submodule add https://github.com/EtroxTaran/multi-agent-development.git conductor
 
 # 3. Copy templates
-cp meta-architect/templates/project/PRODUCT.md.template PRODUCT.md
-cp meta-architect/templates/project/CLAUDE.md.template CLAUDE.md
+cp conductor/templates/project/PRODUCT.md.template PRODUCT.md
+cp conductor/templates/project/CLAUDE.md.template CLAUDE.md
 
 # 4. Edit your files
 # - PRODUCT.md: Your feature specification
@@ -418,21 +418,21 @@ After setup, your project looks like:
 
 ```
 my-project/                 <- Run Claude HERE (project root)
-├── meta-architect/         <- Submodule (tools live here)
-├── .claude -> meta-architect/.claude  <- Symlink for /orchestrate
+├── conductor/         <- Submodule (tools live here)
+├── .claude -> conductor/.claude  <- Symlink for /orchestrate
 ├── PRODUCT.md              <- Your feature specification
 ├── CLAUDE.md               <- Your coding rules
 ├── GEMINI.md               <- Gemini context (optional)
 ├── .cursor/rules           <- Cursor rules (optional)
 ├── run-workflow.sh         <- Convenience script
-├── update-meta-architect.sh <- Update submodule
+├── update-conductor.sh <- Update submodule
 ├── src/                    <- Your application code
 └── tests/                  <- Your tests
 ```
 
 ### Where to Run Claude
 
-**Always run Claude from your PROJECT ROOT**, not from the meta-architect folder:
+**Always run Claude from your PROJECT ROOT**, not from the conductor folder:
 
 ```bash
 cd my-project    # Your project root
@@ -443,20 +443,20 @@ claude           # Start Claude here
 ### Update Meta-Architect
 
 ```bash
-./update-meta-architect.sh
-git commit -m "Update meta-architect"
+./update-conductor.sh
+git commit -m "Update conductor"
 ```
 
 ---
 
 ## Quick Start (Nested Mode)
 
-For testing or if you prefer working within the meta-architect directory:
+For testing or if you prefer working within the conductor directory:
 
 ### 1. Initialize Your Project
 
 ```bash
-# From meta-architect root directory
+# From conductor root directory
 ./scripts/init.sh init my-app
 ```
 
@@ -547,7 +547,7 @@ Output: { "accessToken": "eyJ...", "refreshToken": "eyJ..." }
 cat projects/my-app/.workflow/coordination.log
 ```
 
-> **For complete documentation**, see [docs/META-ARCHITECT-GUIDE.md](docs/META-ARCHITECT-GUIDE.md)
+> **For complete documentation**, see [docs/CONDUCTOR-GUIDE.md](docs/CONDUCTOR-GUIDE.md)
 
 ---
 
@@ -601,7 +601,7 @@ your-project/
 ### Meta-Architect Source Structure
 
 ```
-meta-architect/
+conductor/
 ├── orchestrator/           # Python orchestration library
 │   ├── __init__.py
 │   ├── orchestrator.py     # Main Orchestrator class

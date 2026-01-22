@@ -1,6 +1,6 @@
 version: "3.8"
 
-# SurrealDB deployment for meta-architect orchestrator
+# SurrealDB deployment for Conductor orchestrator
 # For Dokploy: Let Dokploy manage the Traefik labels via its UI
 
 services:

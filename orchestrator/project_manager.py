@@ -99,7 +99,7 @@ class ProjectManager:
         """Initialize project manager.
 
         Args:
-            root_dir: Root directory of meta-architect
+            root_dir: Root directory of Conductor
         """
         self.root_dir = Path(root_dir).resolve()
         self.projects_dir = self.root_dir / "projects"

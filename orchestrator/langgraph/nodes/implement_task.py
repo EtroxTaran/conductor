@@ -1440,7 +1440,7 @@ def _get_task_output_schema() -> Optional[dict]:
     """
     search_paths = [
         Path(__file__).parent.parent.parent / "schemas" / "task-output-schema.json",
-        Path.home() / ".config" / "meta-architect" / "schemas" / "task-output-schema.json",
+        Path.home() / ".config" / "conductor" / "schemas" / "task-output-schema.json",
     ]
 
     for path in search_paths:

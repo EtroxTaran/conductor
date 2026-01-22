@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Meta-Architect: Multi-Agent Orchestration System**
+**Conductor: Multi-Agent Orchestration System**
 
 This index provides a complete map of all documentation in the project.
 
@@ -12,7 +12,7 @@ This index provides a complete map of all documentation in the project.
 |--------------|-------|
 | **Set up a new project** | [Setup Script](#setup-script) |
 | **Get started quickly** | [Quick Start Guide](quick-start.md) |
-| **Understand everything** | [META-ARCHITECT-GUIDE.md](META-ARCHITECT-GUIDE.md) |
+| **Understand everything** | [CONDUCTOR-GUIDE.md](CONDUCTOR-GUIDE.md) |
 | **See system status** | [SYSTEM-STATUS.md](SYSTEM-STATUS.md) |
 | **Learn the architecture** | [SPECIALIST-AGENTS-DESIGN.md](SPECIALIST-AGENTS-DESIGN.md) |
 | **Debug an issue** | [Troubleshooting](#troubleshooting) |
@@ -21,7 +21,7 @@ This index provides a complete map of all documentation in the project.
 
 ## Setup Script
 
-The easiest way to start a new project with meta-architect is using the setup script:
+The easiest way to start a new project with conductor is using the setup script:
 
 ```bash
 # In your project directory (new or existing)
@@ -30,7 +30,7 @@ curl -sL https://raw.githubusercontent.com/EtroxTaran/multi-agent-development/ma
 
 This script:
 - Initializes git (if needed)
-- Adds meta-architect as a submodule
+- Adds conductor as a submodule
 - Creates starter templates (PRODUCT.md, CLAUDE.md, etc.)
 - Creates convenience scripts
 
@@ -42,7 +42,7 @@ This script:
 
 | Document | Audience | Description |
 |----------|----------|-------------|
-| [META-ARCHITECT-GUIDE.md](META-ARCHITECT-GUIDE.md) | Everyone | **Comprehensive Wikipedia-style guide** - Start here for complete coverage |
+| [CONDUCTOR-GUIDE.md](CONDUCTOR-GUIDE.md) | Everyone | **Comprehensive Wikipedia-style guide** - Start here for complete coverage |
 | [quick-start.md](quick-start.md) | Developers | Step-by-step guide to run your first project |
 | [SYSTEM-STATUS.md](SYSTEM-STATUS.md) | All | Current status, test coverage, component overview |
 | [SPECIALIST-AGENTS-DESIGN.md](SPECIALIST-AGENTS-DESIGN.md) | Technical | 12 specialist agents architecture and design |
@@ -151,7 +151,7 @@ Slash commands for Claude Code:
 | [templates/project/cursor-rules.template](../templates/project/cursor-rules.template) | Cursor code review rules template |
 | [templates/project/gitignore.template](../templates/project/gitignore.template) | Project .gitignore template |
 | [templates/project/run-workflow.sh.template](../templates/project/run-workflow.sh.template) | Workflow runner script |
-| [templates/project/update-meta-architect.sh.template](../templates/project/update-meta-architect.sh.template) | Submodule update script |
+| [templates/project/update-conductor.sh.template](../templates/project/update-conductor.sh.template) | Submodule update script |
 
 ### Kanban Board Templates
 
@@ -200,7 +200,7 @@ cat projects/<name>/.workflow/escalations/*.json | jq
 python -m orchestrator --project <name> --reset
 ```
 
-For detailed troubleshooting, see [META-ARCHITECT-GUIDE.md#16-troubleshooting](META-ARCHITECT-GUIDE.md#16-troubleshooting).
+For detailed troubleshooting, see [CONDUCTOR-GUIDE.md#16-troubleshooting](CONDUCTOR-GUIDE.md#16-troubleshooting).
 
 ---
 
@@ -209,7 +209,7 @@ For detailed troubleshooting, see [META-ARCHITECT-GUIDE.md#16-troubleshooting](M
 ```
 README.md (root)                    <- Entry point, installation
     │
-    ├── docs/META-ARCHITECT-GUIDE.md    <- Comprehensive reference
+    ├── docs/CONDUCTOR-GUIDE.md    <- Comprehensive reference
     │       │
     │       ├── docs/quick-start.md         <- Getting started
     │       ├── docs/SYSTEM-STATUS.md       <- Current status

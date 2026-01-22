@@ -120,7 +120,7 @@ Only .workflow/ and .project-config.json are writable by orchestrator.
 This system uses a two-layer nested architecture:
 
 ```
-meta-architect/                     <- OUTER LAYER (You - Orchestrator)
+conductor/                     <- OUTER LAYER (You - Orchestrator)
 |-- CLAUDE.md                       <- Your context (workflow rules)
 |-- orchestrator/                   <- Python orchestration module
 |   |-- utils/

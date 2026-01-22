@@ -4,7 +4,7 @@
 services:
   surrealdb:
     image: surrealdb/surrealdb:v2.1
-    container_name: meta-architect-surrealdb
+    container_name: conductor-surrealdb
     restart: unless-stopped
     user: "0:0"
     command:

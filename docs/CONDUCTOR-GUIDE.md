@@ -1,4 +1,4 @@
-# Meta-Architect: Complete System Guide
+# Conductor: Complete System Guide
 
 **The Definitive Reference for the Multi-Agent Orchestration System**
 
@@ -48,14 +48,14 @@
 
 ## 1. Executive Summary
 
-### What is Meta-Architect?
+### What is Conductor?
 
-Meta-Architect is a **production-grade multi-agent orchestration system** that coordinates three AI coding assistants—Claude, Cursor, and Gemini—to automatically implement software features from specification to working code.
+Conductor is a **production-grade multi-agent orchestration system** that coordinates three AI coding assistants—Claude, Cursor, and Gemini—to automatically implement software features from specification to working code.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   PRODUCT.md ──────► META-ARCHITECT ──────► Working Code   │
+│   PRODUCT.md ──────► CONDUCTOR ──────► Working Code   │
 │   (Your Spec)         (5 Phases)           (Tested & Reviewed)
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -105,7 +105,7 @@ Traditional AI coding assistants are powerful but have limitations:
 
 ### The Solution
 
-Meta-Architect addresses these by:
+Conductor addresses these by:
 
 1. **Multi-Agent Coordination**: Three different AI systems check each other's work
 2. **Structured Workflow**: 5-phase process with checkpoints and gates
@@ -119,7 +119,7 @@ Meta-Architect addresses these by:
 BEFORE (Manual):
   Developer → Write Code → Maybe Test → Maybe Review → Merge
 
-AFTER (Meta-Architect):
+AFTER (Conductor):
   Developer → Write Spec → [Automated: Plan → Validate → Implement TDD → Verify] → Merge
 ```
 
@@ -197,7 +197,7 @@ Independent tasks run simultaneously:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           META-ARCHITECT SYSTEM                              │
+│                           CONDUCTOR SYSTEM                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -609,8 +609,8 @@ print(f"Success: {result.success}, Iterations: {result.iterations}")
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/meta-architect.git
-cd meta-architect
+git clone https://github.com/your-org/conductor.git
+cd conductor
 
 # Install dependencies
 uv sync  # or: pip install -e .
@@ -687,10 +687,10 @@ EOF
 
 ### 10.1 Nested Architecture
 
-Meta-Architect uses a two-layer nested architecture:
+Conductor uses a two-layer nested architecture:
 
 ```
-meta-architect/                     # OUTER LAYER (Orchestrator)
+conductor/                     # OUTER LAYER (Orchestrator)
 ├── CLAUDE.md                       # Orchestrator context (workflow rules)
 ├── orchestrator/                   # Python orchestration module
 ├── scripts/                        # Agent invocation scripts
@@ -1202,7 +1202,7 @@ python -m orchestrator --project <name> --start
 ### 18.1 Complete Directory Structure
 
 ```
-meta-architect/
+conductor/
 ├── orchestrator/                    # Core orchestration module
 │   ├── orchestrator.py              # Main Orchestrator class
 │   ├── project_manager.py           # Project lifecycle
@@ -1305,7 +1305,7 @@ meta-architect/
 │       └── gemini.md
 │
 ├── docs/                            # Documentation
-│   ├── META-ARCHITECT-GUIDE.md      # This file
+│   ├── CONDUCTOR-GUIDE.md      # This file
 │   ├── quick-start.md
 │   ├── SYSTEM-STATUS.md
 │   ├── SPECIALIST-AGENTS-DESIGN.md
@@ -1344,4 +1344,4 @@ meta-architect/
 
 **End of Document**
 
-*Meta-Architect: Orchestrating AI Agents for Quality Software Development*
+*Conductor: Orchestrating AI Agents for Quality Software Development*

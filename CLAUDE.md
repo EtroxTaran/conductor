@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-22 14:51:41 -->
+<!-- Last synced: 2026-01-22 19:38:09 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -130,7 +130,7 @@ Only .workflow/ and .project-config.json are writable by orchestrator.
 This system uses a two-layer nested architecture:
 
 ```
-meta-architect/                     <- OUTER LAYER (You - Orchestrator)
+conductor/                     <- OUTER LAYER (You - Orchestrator)
 |-- CLAUDE.md                       <- Your context (workflow rules)
 |-- orchestrator/                   <- Python orchestration module
 |   |-- utils/

@@ -1,4 +1,4 @@
-"""SurrealDB integration for meta-architect orchestrator.
+"""SurrealDB integration for Conductor orchestrator.
 
 Provides:
 - Connection management with pooling

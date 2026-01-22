@@ -443,7 +443,7 @@ class BaseAgent(ABC):
         Schemas are searched in:
         1. project_dir/schemas/
         2. orchestrator/schemas/
-        3. ~/.config/meta-architect/schemas/
+        3. ~/.config/conductor/schemas/
 
         Args:
             schema_name: Name of the schema file
@@ -458,7 +458,7 @@ class BaseAgent(ABC):
         search_paths = [
             self.project_dir / "schemas" / schema_name,
             Path(__file__).parent.parent / "schemas" / schema_name,
-            Path.home() / ".config" / "meta-architect" / "schemas" / schema_name,
+            Path.home() / ".config" / "conductor" / "schemas" / schema_name,
         ]
 
         for path in search_paths:

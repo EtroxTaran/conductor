@@ -1,6 +1,6 @@
 # SurrealDB Integration Guide
 
-This guide covers setting up and using SurrealDB with meta-architect for persistent workflow state, queryable audit trails, and real-time monitoring.
+This guide covers setting up and using SurrealDB with Conductor for persistent workflow state, queryable audit trails, and real-time monitoring.
 
 ## Why SurrealDB?
 

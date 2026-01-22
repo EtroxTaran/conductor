@@ -1,6 +1,6 @@
 # Skills Discovery Skill
 
-List all available skills in the meta-architect system.
+List all available skills in the Conductor system.
 
 ## Usage
 

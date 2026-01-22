@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SurrealDB CLI for meta-architect.
+"""SurrealDB CLI for Conductor.
 
 Provides command-line operations for database management.
 
@@ -442,7 +442,7 @@ async def cmd_validate(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SurrealDB CLI for meta-architect",
+        description="SurrealDB CLI for Conductor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")

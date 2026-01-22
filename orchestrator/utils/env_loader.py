@@ -1,7 +1,7 @@
 """Environment variable loader for SurrealDB configuration.
 
 Automatically loads .env files from multiple locations with precedence:
-1. ~/.config/meta-architect/.env (user global config)
+1. ~/.config/conductor/.env (user global config)
 2. {repo_root}/.env (repository-level config)
 3. Environment variables (highest priority, override all)
 
@@ -56,20 +56,20 @@ def get_global_config_path() -> Path:
     """Get the global configuration directory path.
 
     Returns:
-        Path to ~/.config/meta-architect/
+        Path to ~/.config/conductor/
     """
     config_home = os.environ.get("XDG_CONFIG_HOME", "")
     if not config_home:
         config_home = str(Path.home() / ".config")
 
-    return Path(config_home) / "meta-architect"
+    return Path(config_home) / "conductor"
 
 
 def load_env(force: bool = False) -> bool:
     """Load environment variables from .env files.
 
     Files are loaded in order of increasing priority:
-    1. ~/.config/meta-architect/.env (user global)
+    1. ~/.config/conductor/.env (user global)
     2. {repo_root}/.env (repository local)
 
     Later files override earlier ones. Environment variables

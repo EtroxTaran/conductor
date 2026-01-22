@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Welcome to your project with **meta-architect** - a multi-agent AI development system.
+Welcome to your project with **conductor** - a multi-agent AI development system.
 
 ## What You Have
 
@@ -8,7 +8,7 @@ Your project now includes:
 
 ```
 your-project/
-├── meta-architect/          # AI orchestration tools (submodule)
+├── conductor/          # AI orchestration tools (submodule)
 ├── Documents/               # Put your project docs here
 ├── CLAUDE.md                # Claude's context (edit this!)
 ├── QUICKSTART.md            # This guide
@@ -210,9 +210,9 @@ The `CLAUDE.md` file is critical. Good context = better code.
 
 ## Learn More
 
-- Full documentation: `meta-architect/docs/`
-- Skills details: `meta-architect/.claude/skills/`
-- Shared rules: `meta-architect/shared-rules/`
+- Full documentation: `conductor/docs/`
+- Skills details: `conductor/.claude/skills/`
+- Shared rules: `conductor/shared-rules/`
 
 ## Need Help?
 

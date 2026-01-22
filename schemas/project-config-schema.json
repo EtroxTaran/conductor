@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://meta-architect.dev/schemas/project-config.json",
+  "$id": "https://conductor.dev/schemas/project-config.json",
   "title": "Project Configuration",
-  "description": "Configuration schema for meta-architect project settings",
+  "description": "Configuration schema for Conductor project settings",
   "type": "object",
   "properties": {
     "project_name": {

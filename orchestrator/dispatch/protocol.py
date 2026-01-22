@@ -132,26 +132,26 @@ class AgentDispatcher:
     def __init__(
         self,
         project_dir: Path,
-        meta_architect_root: Optional[Path] = None,
+        conductor_root: Optional[Path] = None,
     ):
         """Initialize dispatcher.
 
         Args:
             project_dir: Project directory where agents operate
-            meta_architect_root: Root of meta-architect (for loading agent contexts)
+            conductor_root: Root of Conductor (for loading agent contexts)
         """
         self.project_dir = Path(project_dir)
-        self.meta_architect_root = meta_architect_root or self._find_meta_architect_root()
+        self.conductor_root = conductor_root or self._find_conductor_root()
         self._execution_log: List[Dict[str, Any]] = []
 
-    def _find_meta_architect_root(self) -> Path:
-        """Find the meta-architect root directory."""
+    def _find_conductor_root(self) -> Path:
+        """Find the Conductor root directory."""
         current = Path(__file__).parent
         while current != current.parent:
             if (current / "orchestrator").is_dir() and (current / "agents").is_dir():
                 return current
             current = current.parent
-        raise RuntimeError("Could not find meta-architect root directory")
+        raise RuntimeError("Could not find Conductor root directory")
 
     def load_agent_context(self, agent: AgentConfig) -> str:
         """Load the context file for an agent.
@@ -165,7 +165,7 @@ class AgentDispatcher:
         if not agent.context_file:
             return ""
 
-        context_path = self.meta_architect_root / agent.context_file
+        context_path = self.conductor_root / agent.context_file
         if not context_path.exists():
             logger.warning(f"Context file not found: {context_path}")
             return ""
@@ -184,7 +184,7 @@ class AgentDispatcher:
         if not agent.tools_file:
             return {"allowed": [], "forbidden": []}
 
-        tools_path = self.meta_architect_root / agent.tools_file
+        tools_path = self.conductor_root / agent.tools_file
         if not tools_path.exists():
             logger.warning(f"Tools file not found: {tools_path}")
             return {"allowed": [], "forbidden": []}
@@ -476,7 +476,7 @@ class AgentDispatcher:
         if not schema_path:
             return []
 
-        schema_file = self.meta_architect_root / schema_path
+        schema_file = self.conductor_root / schema_path
         if not schema_file.exists():
             logger.warning(f"Schema file not found: {schema_file}")
             return []

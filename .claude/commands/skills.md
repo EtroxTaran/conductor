@@ -5,7 +5,7 @@ allowed-tools: ["Read", "Glob"]
 
 # Available Skills
 
-Display all available skills in the meta-architect system.
+Display all available skills in the conductor system.
 
 ## Quick Reference
 
@@ -67,7 +67,7 @@ Display all available skills in the meta-architect system.
 
 ## Skill Locations
 
-All skills are defined in: `meta-architect/.claude/skills/`
+All skills are defined in: `conductor/.claude/skills/`
 
 Each skill has:
 - `SKILL.md` - Detailed documentation
@@ -75,6 +75,6 @@ Each skill has:
 
 ## Getting More Help
 
-- For detailed skill docs: Read `meta-architect/.claude/skills/<skill-name>/SKILL.md`
+- For detailed skill docs: Read `conductor/.claude/skills/<skill-name>/SKILL.md`
 - For workflow overview: See CLAUDE.md
 - For quick start: See QUICKSTART.md

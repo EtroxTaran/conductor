@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Run Meta-Architect Workflow
+# Run Conductor Workflow
 # =============================================================================
-# This script runs the meta-architect workflow on this project.
+# This script runs the conductor workflow on this project.
 #
 # Usage:
 #   ./run-workflow.sh
@@ -14,9 +14,9 @@ set -e
 # Change to the script's directory (project root)
 cd "$(dirname "$0")"
 
-# Check if meta-architect submodule exists
-if [[ ! -d "meta-architect" ]]; then
-    echo "Error: meta-architect submodule not found"
+# Check if conductor submodule exists
+if [[ ! -d "conductor" ]]; then
+    echo "Error: conductor submodule not found"
     echo ""
     echo "To fix this, run:"
     echo "  git submodule update --init --recursive"
@@ -31,12 +31,12 @@ if [[ ! -f "PRODUCT.md" ]]; then
     echo "Error: PRODUCT.md not found"
     echo ""
     echo "Create a PRODUCT.md file with your feature specification."
-    echo "See meta-architect/templates/project/PRODUCT.md.template for an example."
+    echo "See conductor/templates/project/PRODUCT.md.template for an example."
     exit 1
 fi
 
 # Run the workflow
-echo "Starting meta-architect workflow..."
+echo "Starting conductor workflow..."
 echo ""
 
-./meta-architect/scripts/init.sh run --path "$(pwd)"
+./conductor/scripts/init.sh run --path "$(pwd)"

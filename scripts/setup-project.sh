@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# Meta-Architect Project Setup Script
+# Conductor Project Setup Script
 # =============================================================================
 #
-# This script sets up meta-architect integration in any project directory.
+# This script sets up conductor integration in any project directory.
 #
 # Usage:
 #   curl -sL https://raw.githubusercontent.com/EtroxTaran/multi-agent-development/main/scripts/setup-project.sh | bash
-#   ./meta-architect/scripts/setup-project.sh
+#   ./conductor/scripts/setup-project.sh
 #
 # Options:
 #   --skip-templates    Don't create starter templates
@@ -27,7 +27,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 REPO_URL="https://github.com/EtroxTaran/multi-agent-development.git"
-SUBMODULE_PATH="meta-architect"
+SUBMODULE_PATH="conductor"
 DEFAULT_BRANCH="main"
 
 # Parse arguments
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo "Meta-Architect Project Setup"
+            echo "Conductor Project Setup"
             echo ""
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -120,24 +120,24 @@ else
 fi
 
 # =============================================================================
-# Step 2: Add meta-architect as submodule
+# Step 2: Add conductor as submodule
 # =============================================================================
 
-info "Setting up meta-architect submodule..."
+info "Setting up conductor submodule..."
 
 if [[ -d "$SUBMODULE_PATH" ]]; then
     if [[ -f "$SUBMODULE_PATH/.git" ]] || [[ -d "$SUBMODULE_PATH/.git" ]]; then
-        success "meta-architect submodule already exists"
+        success "conductor submodule already exists"
     else
         warn "Directory '$SUBMODULE_PATH' exists but is not a submodule"
         warn "Please remove it or use a different path"
         exit 1
     fi
 else
-    info "Adding meta-architect submodule from $REPO_URL (branch: $BRANCH)..."
+    info "Adding conductor submodule from $REPO_URL (branch: $BRANCH)..."
     git submodule add -b "$BRANCH" "$REPO_URL" "$SUBMODULE_PATH"
     git submodule update --init --recursive
-    success "Added meta-architect submodule"
+    success "Added conductor submodule"
 fi
 
 # =============================================================================
@@ -294,17 +294,17 @@ info "Creating convenience scripts..."
 if [[ ! -f "run-workflow.sh" ]]; then
     cat > "run-workflow.sh" << 'RUN_EOF'
 #!/bin/bash
-# Run meta-architect workflow on this project
+# Run conductor workflow on this project
 set -e
 cd "$(dirname "$0")"
 
-if [[ ! -d "meta-architect" ]]; then
-    echo "Error: meta-architect submodule not found"
+if [[ ! -d "conductor" ]]; then
+    echo "Error: conductor submodule not found"
     echo "Run: git submodule update --init --recursive"
     exit 1
 fi
 
-./meta-architect/scripts/init.sh run --path "$(pwd)"
+./conductor/scripts/init.sh run --path "$(pwd)"
 RUN_EOF
     chmod +x "run-workflow.sh"
     success "Created: run-workflow.sh"
@@ -312,35 +312,35 @@ else
     warn "File already exists: run-workflow.sh (skipping)"
 fi
 
-# update-meta-architect.sh
-if [[ ! -f "update-meta-architect.sh" ]]; then
-    cat > "update-meta-architect.sh" << 'UPDATE_EOF'
+# update-conductor.sh
+if [[ ! -f "update-conductor.sh" ]]; then
+    cat > "update-conductor.sh" << 'UPDATE_EOF'
 #!/bin/bash
-# Update meta-architect submodule to latest
+# Update conductor submodule to latest
 set -e
 cd "$(dirname "$0")"
 
-if [[ ! -d "meta-architect" ]]; then
-    echo "Error: meta-architect submodule not found"
+if [[ ! -d "conductor" ]]; then
+    echo "Error: conductor submodule not found"
     exit 1
 fi
 
-echo "Updating meta-architect submodule..."
-cd meta-architect
+echo "Updating conductor submodule..."
+cd conductor
 git fetch origin
 git checkout main
 git pull origin main
 cd ..
 
-git add meta-architect
+git add conductor
 echo ""
-echo "Updated meta-architect to latest."
-echo "Run 'git commit -m \"Update meta-architect\"' to save the update."
+echo "Updated conductor to latest."
+echo "Run 'git commit -m \"Update conductor\"' to save the update."
 UPDATE_EOF
-    chmod +x "update-meta-architect.sh"
-    success "Created: update-meta-architect.sh"
+    chmod +x "update-conductor.sh"
+    success "Created: update-conductor.sh"
 else
-    warn "File already exists: update-meta-architect.sh (skipping)"
+    warn "File already exists: update-conductor.sh (skipping)"
 fi
 
 # =============================================================================
@@ -354,13 +354,13 @@ if [[ -d "$SUBMODULE_PATH/.claude" ]]; then
         success "Symlink .claude already exists"
     elif [[ -d ".claude" ]]; then
         warn "Directory .claude already exists (not symlinking)"
-        warn "To use /orchestrate, manually symlink: ln -s meta-architect/.claude .claude"
+        warn "To use /orchestrate, manually symlink: ln -s conductor/.claude .claude"
     else
         ln -s "$SUBMODULE_PATH/.claude" ".claude"
         success "Created symlink: .claude -> $SUBMODULE_PATH/.claude"
     fi
 else
-    warn "meta-architect/.claude not found - skills won't be available"
+    warn "conductor/.claude not found - skills won't be available"
 fi
 
 # =============================================================================
@@ -372,7 +372,7 @@ info "Checking .gitignore..."
 GITIGNORE_ADDITIONS=$(cat << 'GITIGNORE_EOF'
 
 # =============================================================================
-# Meta-Architect
+# Conductor
 # =============================================================================
 # Workflow state is regenerated during each run
 .workflow/
@@ -385,11 +385,11 @@ GITIGNORE_EOF
 if [[ ! -f ".gitignore" ]]; then
     echo "$GITIGNORE_ADDITIONS" > ".gitignore"
     success "Created: .gitignore"
-elif ! grep -q "Meta-Architect Workflow State" ".gitignore" 2>/dev/null; then
+elif ! grep -q "Conductor Workflow State" ".gitignore" 2>/dev/null; then
     echo "$GITIGNORE_ADDITIONS" >> ".gitignore"
-    success "Updated: .gitignore with meta-architect entries"
+    success "Updated: .gitignore with conductor entries"
 else
-    warn ".gitignore already has meta-architect entries (skipping)"
+    warn ".gitignore already has conductor entries (skipping)"
 fi
 
 # =============================================================================
@@ -438,7 +438,7 @@ fi
 echo ""
 echo "============================================================================="
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                    Meta-Architect Setup Complete!                         ║${NC}"
+echo -e "${GREEN}║                    Conductor Setup Complete!                         ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}What is this?${NC}"
@@ -447,7 +447,7 @@ echo "  access to Cursor (security) and Gemini (architecture) for code review."
 echo ""
 echo -e "${BLUE}Project structure:${NC}"
 echo "  $(pwd)/"
-echo "  ├── meta-architect/      # AI orchestration (submodule)"
+echo "  ├── conductor/      # AI orchestration (submodule)"
 echo "  ├── Documents/           # Your project docs (add here)"
 echo "  ├── CLAUDE.md            # Claude's context (EDIT THIS)"
 echo "  ├── QUICKSTART.md        # Getting started guide"
@@ -494,7 +494,7 @@ echo ""
 echo -e "${BLUE}Files to read:${NC}"
 echo "  • QUICKSTART.md           - Full getting started guide"
 echo "  • CLAUDE.md               - Claude's context (customize this!)"
-echo "  • meta-architect/docs/    - Detailed documentation"
+echo "  • conductor/docs/    - Detailed documentation"
 echo ""
 echo -e "${YELLOW}Tip:${NC} The better you fill out CLAUDE.md, the better Claude performs!"
 echo ""

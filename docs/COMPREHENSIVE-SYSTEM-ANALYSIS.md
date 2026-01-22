@@ -1,4 +1,4 @@
-# Meta-Architect: Comprehensive System Analysis
+# Conductor: Comprehensive System Analysis
 
 **Document Purpose**: Complete system documentation for AI-assisted review
 **Date**: 2026-01-21
@@ -10,7 +10,7 @@
 
 ## REVIEW INSTRUCTIONS FOR AI AGENTS
 
-**TO CLAUDE/GEMINI/CURSOR**: This document provides a complete analysis of the Meta-Architect multi-agent orchestration system. Your task is to:
+**TO CLAUDE/GEMINI/CURSOR**: This document provides a complete analysis of the Conductor multi-agent orchestration system. Your task is to:
 
 1. **Understand** the system's vision, goals, and architecture
 2. **Analyze** for potential flaws, bugs, or design issues
@@ -38,7 +38,7 @@
 
 ### 1.1 What This System Does
 
-Meta-Architect is a **production-grade multi-agent orchestration system** that coordinates specialist AI agents (Claude, Cursor, Gemini) to implement software features through a structured workflow.
+Conductor is a **production-grade multi-agent orchestration system** that coordinates specialist AI agents (Claude, Cursor, Gemini) to implement software features through a structured workflow.
 
 **Core Value Proposition**:
 - **Automated Feature Implementation**: From specification to working code
@@ -73,7 +73,7 @@ Meta-Architect is a **production-grade multi-agent orchestration system** that c
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           META-ARCHITECT SYSTEM                              │
+│                           CONDUCTOR SYSTEM                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -875,7 +875,7 @@ tests/
 ### 17.1 Complete Directory Structure
 
 ```
-meta-architect/
+conductor/
 ├── orchestrator/                    # Core orchestration module (~18K LOC)
 │   ├── __init__.py
 │   ├── orchestrator.py              # Main Orchestrator class
@@ -1076,7 +1076,7 @@ meta-architect/
 
 ## PART 20: CONCLUSION
 
-This document provides a comprehensive overview of the Meta-Architect system. The system has:
+This document provides a comprehensive overview of the Conductor system. The system has:
 
 **Strengths**:
 - Comprehensive 5-phase workflow with checkpointing
@@ -1102,19 +1102,19 @@ This document provides a comprehensive overview of the Meta-Architect system. Th
 ### For Claude Code CLI
 
 ```bash
-claude -p "Read /home/etrox/workspace/meta-architect/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed review following the checklist in Part 18. Focus on architecture, code quality, and potential improvements." --output-format json
+claude -p "Read /home/etrox/workspace/conductor/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed review following the checklist in Part 18. Focus on architecture, code quality, and potential improvements." --output-format json
 ```
 
 ### For Cursor CLI
 
 ```bash
-cursor-agent --print --output-format json "Read /home/etrox/workspace/meta-architect/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed security review following the checklist in Part 18. Focus on vulnerabilities, injection risks, and security issues."
+cursor-agent --print --output-format json "Read /home/etrox/workspace/conductor/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed security review following the checklist in Part 18. Focus on vulnerabilities, injection risks, and security issues."
 ```
 
 ### For Gemini CLI
 
 ```bash
-gemini --yolo "Read /home/etrox/workspace/meta-architect/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed architecture review following the checklist in Part 18. Focus on scalability, design patterns, and performance."
+gemini --yolo "Read /home/etrox/workspace/conductor/docs/COMPREHENSIVE-SYSTEM-ANALYSIS.md and provide a detailed architecture review following the checklist in Part 18. Focus on scalability, design patterns, and performance."
 ```
 
 ---

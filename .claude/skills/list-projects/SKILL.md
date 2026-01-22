@@ -1,6 +1,6 @@
 # List Projects Skill
 
-List all available projects in the meta-architect workspace.
+List all available projects in the Conductor workspace.
 
 ## Overview
 

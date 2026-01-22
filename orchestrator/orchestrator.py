@@ -776,7 +776,7 @@ Examples:
     # Handle project management commands first
     root_dir = Path(args.project_dir).resolve()
     if args.project_dir == ".":
-        # Try to find meta-architect root
+        # Try to find Conductor root
         candidate = Path.cwd()
         while candidate != candidate.parent:
             if (candidate / "projects").exists() and (candidate / "orchestrator").exists():

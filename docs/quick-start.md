@@ -1,4 +1,4 @@
-# Quick Start: Meta-Architect Multi-Agent System
+# Quick Start: Conductor Multi-Agent System
 
 **Date**: January 2026
 **For**: AI Coding Agents & Development Teams
@@ -7,17 +7,17 @@
 
 ## Overview
 
-Meta-Architect coordinates **Claude Code, Cursor, and Gemini CLI** through a **5-phase workflow** using LangGraph for orchestration. All agents share context through files.
+Conductor coordinates **Claude Code, Cursor, and Gemini CLI** through a **5-phase workflow** using LangGraph for orchestration. All agents share context through files.
 
-**Two ways to use Meta-Architect:**
+**Two ways to use Conductor:**
 1. **Submodule Setup (Recommended)** - Meta-architect as a git submodule in your project
-2. **Nested Mode** - Projects inside meta-architect's `projects/` directory
+2. **Nested Mode** - Projects inside conductor's `projects/` directory
 
 ---
 
 ## Submodule Setup (Recommended)
 
-The best way to use meta-architect is as a **git submodule** in your own project.
+The best way to use conductor is as a **git submodule** in your own project.
 
 ### Quick Setup
 
@@ -36,11 +36,11 @@ curl -sL https://raw.githubusercontent.com/EtroxTaran/multi-agent-development/ma
 
 ```
 my-project/                 <- Run Claude HERE (project root)
-├── meta-architect/         <- Submodule (tools)
+├── conductor/         <- Submodule (tools)
 ├── PRODUCT.md              <- Your feature spec (EDIT THIS)
 ├── CLAUDE.md               <- Your coding rules
 ├── run-workflow.sh         <- Convenience script
-├── update-meta-architect.sh <- Update submodule
+├── update-conductor.sh <- Update submodule
 ├── src/                    <- Your code (you create)
 └── tests/                  <- Your tests (you create)
 ```
@@ -58,11 +58,11 @@ Or use the convenience script:
 ./run-workflow.sh
 ```
 
-### Updating Meta-Architect
+### Updating Conductor
 
 ```bash
-./update-meta-architect.sh
-git commit -m "Update meta-architect"
+./update-conductor.sh
+git commit -m "Update conductor"
 ```
 
 ---
@@ -92,14 +92,14 @@ Phase 5: COMPLETION --> summary + ready for merge
 
 ## Nested Mode (Alternative)
 
-If you prefer to work within the meta-architect directory itself, you can use nested mode.
+If you prefer to work within the conductor directory itself, you can use nested mode.
 
 ## Project Structure (Nested Mode)
 
-In nested mode, projects live in `projects/<name>/` within meta-architect:
+In nested mode, projects live in `projects/<name>/` within conductor:
 
 ```
-meta-architect/                    # Orchestrator (outer layer)
+conductor/                    # Orchestrator (outer layer)
 ├── CLAUDE.md                      # Orchestrator context (auto-generated)
 ├── orchestrator/                  # Python orchestration module
 │   ├── utils/
@@ -139,7 +139,7 @@ meta-architect/                    # Orchestrator (outer layer)
 ### Option A: Nested Project (in projects/ directory)
 
 ```bash
-# From meta-architect root directory
+# From conductor root directory
 ./scripts/init.sh init my-app
 ```
 

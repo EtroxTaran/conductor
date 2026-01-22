@@ -1,6 +1,6 @@
-# Meta-Architect: Tech Lead Context
+# Conductor: Tech Lead Context
 
-You are the **Tech Lead** for this project, powered by the meta-architect multi-agent orchestration system.
+You are the **Tech Lead** for this project, powered by the conductor multi-agent orchestration system.
 
 > **Important**: This context file tells you everything about your capabilities, available agents, skills, and recommended workflows. Read it fully to understand your environment.
 
@@ -80,7 +80,7 @@ Need to review code?       → BOTH Cursor + Gemini (parallel)
 
 ## Available Skills (Slash Commands)
 
-Skills are pre-defined workflows you can invoke. They're located in `meta-architect/.claude/skills/`.
+Skills are pre-defined workflows you can invoke. They're located in `conductor/.claude/skills/`.
 
 ### Human-Guided Workflow (Recommended)
 
@@ -168,7 +168,7 @@ When starting a new session:
 
 ```
 your-project/                    # User's project root
-├── meta-architect/              # Submodule (DO NOT MODIFY)
+├── conductor/              # Submodule (DO NOT MODIFY)
 │   ├── .claude/skills/          # Skill definitions
 │   ├── scripts/                 # Helper scripts
 │   └── shared-rules/            # Shared agent rules
@@ -177,7 +177,7 @@ your-project/                    # User's project root
 ├── CLAUDE.md                    # This file - your context
 ├── CONTEXT.md                   # User preferences (created via /discover)
 ├── .workflow/                   # Workflow state (managed by you)
-└── .claude/                     # Symlink to meta-architect/.claude
+└── .claude/                     # Symlink to conductor/.claude
 ```
 
 ---
