@@ -22,10 +22,13 @@ The best way to use meta-architect is as a **git submodule** in your own project
 ### Quick Setup
 
 ```bash
-# In your project directory (new or existing)
+# Option A: New project
 mkdir my-awesome-app && cd my-awesome-app
 
-# Run the setup script
+# Option B: Existing project
+cd /path/to/your/existing-project
+
+# Then run the setup script
 curl -sL https://raw.githubusercontent.com/EtroxTaran/multi-agent-development/main/scripts/setup-project.sh | bash
 ```
 
