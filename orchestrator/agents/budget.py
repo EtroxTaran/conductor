@@ -1,0 +1,598 @@
+"""Budget control for CLI invocations.
+
+Tracks and limits API costs per:
+- Invocation (via --max-budget-usd flag)
+- Task (accumulated across invocations)
+- Project (total project budget)
+
+Usage:
+    manager = BudgetManager(project_dir)
+
+    # Check if invocation is within budget
+    if manager.can_spend(task_id="T1", amount_usd=0.50):
+        # Run the invocation
+        result = agent.run(...)
+        # Record the actual cost
+        manager.record_spend(task_id="T1", amount_usd=actual_cost)
+
+    # Get budget status
+    status = manager.get_budget_status()
+    print(f"Remaining: ${status['remaining_usd']:.2f}")
+
+    # Set budget limits
+    manager.set_task_budget("T1", max_usd=2.00)
+    manager.set_project_budget(max_usd=50.00)
+"""
+
+import json
+import logging
+import threading
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Default storage location
+DEFAULT_BUDGET_FILE = ".workflow/budget.json"
+
+# Default limits (None = unlimited)
+DEFAULT_TASK_BUDGET_USD = None
+DEFAULT_PROJECT_BUDGET_USD = None
+DEFAULT_INVOCATION_BUDGET_USD = 1.00  # Safety limit per invocation
+
+
+@dataclass
+class SpendRecord:
+    """Record of a single spend event.
+
+    Attributes:
+        id: Unique record identifier
+        timestamp: When the spend occurred
+        task_id: Task that incurred the cost
+        agent: Agent that incurred the cost
+        amount_usd: Cost in USD
+        model: Model used
+        prompt_tokens: Input tokens (if known)
+        completion_tokens: Output tokens (if known)
+        metadata: Additional metadata
+    """
+
+    id: str
+    timestamp: str
+    task_id: str
+    agent: str
+    amount_usd: float
+    model: Optional[str] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Serialize for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SpendRecord":
+        """Deserialize from storage."""
+        return cls(**data)
+
+
+@dataclass
+class BudgetConfig:
+    """Budget configuration.
+
+    Attributes:
+        project_budget_usd: Total project budget (None = unlimited)
+        task_budget_usd: Default per-task budget (None = unlimited)
+        invocation_budget_usd: Default per-invocation budget
+        task_budgets: Per-task budget overrides
+        warn_at_percent: Warn when budget reaches this percentage
+        enabled: Whether budget tracking is enabled
+    """
+
+    project_budget_usd: Optional[float] = DEFAULT_PROJECT_BUDGET_USD
+    task_budget_usd: Optional[float] = DEFAULT_TASK_BUDGET_USD
+    invocation_budget_usd: float = DEFAULT_INVOCATION_BUDGET_USD
+    task_budgets: dict[str, float] = field(default_factory=dict)
+    warn_at_percent: float = 80.0
+    enabled: bool = True
+
+    def to_dict(self) -> dict:
+        """Serialize for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BudgetConfig":
+        """Deserialize from storage."""
+        return cls(**data)
+
+
+@dataclass
+class BudgetState:
+    """Current budget state.
+
+    Attributes:
+        total_spent_usd: Total amount spent
+        task_spent: Spending by task
+        records: Spend records
+        config: Budget configuration
+        updated_at: Last update timestamp
+    """
+
+    total_spent_usd: float = 0.0
+    task_spent: dict[str, float] = field(default_factory=dict)
+    records: list[dict] = field(default_factory=list)
+    config: BudgetConfig = field(default_factory=BudgetConfig)
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> dict:
+        """Serialize for storage."""
+        return {
+            "total_spent_usd": self.total_spent_usd,
+            "task_spent": self.task_spent,
+            "records": self.records,
+            "config": self.config.to_dict(),
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BudgetState":
+        """Deserialize from storage."""
+        config = BudgetConfig.from_dict(data.get("config", {}))
+        return cls(
+            total_spent_usd=data.get("total_spent_usd", 0.0),
+            task_spent=data.get("task_spent", {}),
+            records=data.get("records", []),
+            config=config,
+            updated_at=data.get("updated_at", datetime.now().isoformat()),
+        )
+
+
+class BudgetExceeded(Exception):
+    """Raised when an operation would exceed budget limits."""
+
+    def __init__(
+        self,
+        limit_type: str,
+        limit_usd: float,
+        current_usd: float,
+        requested_usd: float,
+    ):
+        self.limit_type = limit_type
+        self.limit_usd = limit_usd
+        self.current_usd = current_usd
+        self.requested_usd = requested_usd
+        super().__init__(
+            f"{limit_type} budget exceeded: "
+            f"limit=${limit_usd:.2f}, current=${current_usd:.2f}, "
+            f"requested=${requested_usd:.2f}"
+        )
+
+
+class BudgetManager:
+    """Manages budget tracking and limits.
+
+    Thread-safe budget tracking with persistence.
+    """
+
+    def __init__(
+        self,
+        project_dir: Path | str,
+        budget_file: Optional[str] = None,
+        config: Optional[BudgetConfig] = None,
+    ):
+        """Initialize budget manager.
+
+        Args:
+            project_dir: Project directory
+            budget_file: Path to budget file (relative to project)
+            config: Optional configuration override
+        """
+        self.project_dir = Path(project_dir)
+        self.budget_file = self.project_dir / (budget_file or DEFAULT_BUDGET_FILE)
+        self._lock = threading.Lock()
+        self._record_counter = 0
+
+        # Load or initialize state
+        self._state = self._load_state()
+
+        # Apply config override
+        if config:
+            self._state.config = config
+            self._save_state()
+
+    def _load_state(self) -> BudgetState:
+        """Load budget state from disk."""
+        if not self.budget_file.exists():
+            return BudgetState()
+
+        try:
+            data = json.loads(self.budget_file.read_text())
+            return BudgetState.from_dict(data)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load budget state: {e}")
+            return BudgetState()
+
+    def _save_state(self) -> None:
+        """Save budget state to disk."""
+        self.budget_file.parent.mkdir(parents=True, exist_ok=True)
+        self._state.updated_at = datetime.now().isoformat()
+        self.budget_file.write_text(json.dumps(self._state.to_dict(), indent=2))
+
+    def _generate_record_id(self) -> str:
+        """Generate unique record ID."""
+        self._record_counter += 1
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        return f"spend-{timestamp}-{self._record_counter:04d}"
+
+    @property
+    def config(self) -> BudgetConfig:
+        """Get current configuration."""
+        return self._state.config
+
+    def set_project_budget(self, max_usd: Optional[float]) -> None:
+        """Set the project-wide budget limit.
+
+        Args:
+            max_usd: Maximum budget in USD (None = unlimited)
+        """
+        with self._lock:
+            self._state.config.project_budget_usd = max_usd
+            self._save_state()
+            logger.info(f"Set project budget: ${max_usd:.2f}" if max_usd else "Set project budget: unlimited")
+
+    def set_task_budget(self, task_id: str, max_usd: Optional[float]) -> None:
+        """Set budget limit for a specific task.
+
+        Args:
+            task_id: Task identifier
+            max_usd: Maximum budget in USD (None = remove limit)
+        """
+        with self._lock:
+            if max_usd is None:
+                self._state.config.task_budgets.pop(task_id, None)
+            else:
+                self._state.config.task_budgets[task_id] = max_usd
+            self._save_state()
+            logger.info(f"Set task {task_id} budget: ${max_usd:.2f}" if max_usd else f"Removed task {task_id} budget limit")
+
+    def set_default_task_budget(self, max_usd: Optional[float]) -> None:
+        """Set default budget for all tasks.
+
+        Args:
+            max_usd: Default maximum budget in USD (None = unlimited)
+        """
+        with self._lock:
+            self._state.config.task_budget_usd = max_usd
+            self._save_state()
+
+    def set_invocation_budget(self, max_usd: float) -> None:
+        """Set default per-invocation budget limit.
+
+        This is the value passed to --max-budget-usd.
+
+        Args:
+            max_usd: Maximum budget per invocation in USD
+        """
+        with self._lock:
+            self._state.config.invocation_budget_usd = max_usd
+            self._save_state()
+
+    def get_task_budget(self, task_id: str) -> Optional[float]:
+        """Get budget limit for a task.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            Budget limit in USD, or None if unlimited
+        """
+        # Check for task-specific override
+        if task_id in self._state.config.task_budgets:
+            return self._state.config.task_budgets[task_id]
+        # Fall back to default
+        return self._state.config.task_budget_usd
+
+    def get_invocation_budget(self, task_id: Optional[str] = None) -> float:
+        """Get the budget for a single invocation.
+
+        Args:
+            task_id: Optional task ID for context
+
+        Returns:
+            Budget limit in USD for --max-budget-usd
+        """
+        # Could be made more sophisticated based on task complexity
+        return self._state.config.invocation_budget_usd
+
+    def get_task_spent(self, task_id: str) -> float:
+        """Get amount spent on a task.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            Total spent in USD
+        """
+        return self._state.task_spent.get(task_id, 0.0)
+
+    def get_task_remaining(self, task_id: str) -> Optional[float]:
+        """Get remaining budget for a task.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            Remaining budget in USD, or None if unlimited
+        """
+        budget = self.get_task_budget(task_id)
+        if budget is None:
+            return None
+        spent = self.get_task_spent(task_id)
+        return max(0, budget - spent)
+
+    def get_project_remaining(self) -> Optional[float]:
+        """Get remaining project budget.
+
+        Returns:
+            Remaining budget in USD, or None if unlimited
+        """
+        budget = self._state.config.project_budget_usd
+        if budget is None:
+            return None
+        return max(0, budget - self._state.total_spent_usd)
+
+    def can_spend(
+        self,
+        task_id: str,
+        amount_usd: float,
+        raise_on_exceeded: bool = False,
+    ) -> bool:
+        """Check if an amount can be spent.
+
+        Args:
+            task_id: Task identifier
+            amount_usd: Amount to spend
+            raise_on_exceeded: Whether to raise BudgetExceeded
+
+        Returns:
+            True if spend is within budget
+
+        Raises:
+            BudgetExceeded: If raise_on_exceeded and budget would be exceeded
+        """
+        # Check project budget
+        project_budget = self._state.config.project_budget_usd
+        if project_budget is not None:
+            if self._state.total_spent_usd + amount_usd > project_budget:
+                if raise_on_exceeded:
+                    raise BudgetExceeded(
+                        "project",
+                        project_budget,
+                        self._state.total_spent_usd,
+                        amount_usd,
+                    )
+                return False
+
+        # Check task budget
+        task_budget = self.get_task_budget(task_id)
+        if task_budget is not None:
+            task_spent = self.get_task_spent(task_id)
+            if task_spent + amount_usd > task_budget:
+                if raise_on_exceeded:
+                    raise BudgetExceeded(
+                        f"task:{task_id}",
+                        task_budget,
+                        task_spent,
+                        amount_usd,
+                    )
+                return False
+
+        return True
+
+    def record_spend(
+        self,
+        task_id: str,
+        agent: str,
+        amount_usd: float,
+        model: Optional[str] = None,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        metadata: Optional[dict] = None,
+    ) -> SpendRecord:
+        """Record a spend event.
+
+        Args:
+            task_id: Task that incurred the cost
+            agent: Agent that incurred the cost
+            amount_usd: Cost in USD
+            model: Model used
+            prompt_tokens: Input tokens
+            completion_tokens: Output tokens
+            metadata: Additional metadata
+
+        Returns:
+            Created SpendRecord
+        """
+        with self._lock:
+            record = SpendRecord(
+                id=self._generate_record_id(),
+                timestamp=datetime.now().isoformat(),
+                task_id=task_id,
+                agent=agent,
+                amount_usd=amount_usd,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                metadata=metadata or {},
+            )
+
+            # Update totals
+            self._state.total_spent_usd += amount_usd
+            self._state.task_spent[task_id] = self._state.task_spent.get(task_id, 0.0) + amount_usd
+
+            # Store record
+            self._state.records.append(record.to_dict())
+
+            self._save_state()
+
+            logger.debug(f"Recorded spend: ${amount_usd:.4f} for {task_id}")
+
+            # Check for warning threshold
+            self._check_warning_thresholds(task_id)
+
+            return record
+
+    def _check_warning_thresholds(self, task_id: str) -> None:
+        """Check and log warning if approaching budget limits."""
+        warn_percent = self._state.config.warn_at_percent / 100
+
+        # Check project budget
+        project_budget = self._state.config.project_budget_usd
+        if project_budget and self._state.total_spent_usd >= project_budget * warn_percent:
+            remaining = project_budget - self._state.total_spent_usd
+            logger.warning(
+                f"Project budget warning: ${remaining:.2f} remaining "
+                f"({100 - self._state.total_spent_usd / project_budget * 100:.1f}% left)"
+            )
+
+        # Check task budget
+        task_budget = self.get_task_budget(task_id)
+        task_spent = self.get_task_spent(task_id)
+        if task_budget and task_spent >= task_budget * warn_percent:
+            remaining = task_budget - task_spent
+            logger.warning(
+                f"Task {task_id} budget warning: ${remaining:.2f} remaining "
+                f"({100 - task_spent / task_budget * 100:.1f}% left)"
+            )
+
+    def get_budget_status(self) -> dict[str, Any]:
+        """Get comprehensive budget status.
+
+        Returns:
+            Budget status dictionary
+        """
+        project_budget = self._state.config.project_budget_usd
+        project_remaining = self.get_project_remaining()
+
+        return {
+            "total_spent_usd": self._state.total_spent_usd,
+            "project_budget_usd": project_budget,
+            "project_remaining_usd": project_remaining,
+            "project_used_percent": (
+                self._state.total_spent_usd / project_budget * 100
+                if project_budget
+                else None
+            ),
+            "task_count": len(self._state.task_spent),
+            "record_count": len(self._state.records),
+            "task_spent": dict(self._state.task_spent),
+            "updated_at": self._state.updated_at,
+            "enabled": self._state.config.enabled,
+        }
+
+    def get_task_spending_report(self) -> list[dict[str, Any]]:
+        """Get spending report by task.
+
+        Returns:
+            List of task spending summaries
+        """
+        report = []
+        for task_id, spent in self._state.task_spent.items():
+            budget = self.get_task_budget(task_id)
+            remaining = budget - spent if budget else None
+
+            report.append({
+                "task_id": task_id,
+                "spent_usd": spent,
+                "budget_usd": budget,
+                "remaining_usd": remaining,
+                "used_percent": spent / budget * 100 if budget else None,
+            })
+
+        return sorted(report, key=lambda x: x["spent_usd"], reverse=True)
+
+    def reset_task_spending(self, task_id: str) -> bool:
+        """Reset spending for a specific task.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            True if task had spending to reset
+        """
+        with self._lock:
+            if task_id not in self._state.task_spent:
+                return False
+
+            amount = self._state.task_spent.pop(task_id)
+            self._state.total_spent_usd -= amount
+
+            # Remove task-specific records
+            self._state.records = [
+                r for r in self._state.records if r.get("task_id") != task_id
+            ]
+
+            self._save_state()
+            logger.info(f"Reset spending for task {task_id}: ${amount:.2f}")
+            return True
+
+    def reset_all(self) -> None:
+        """Reset all spending records.
+
+        Preserves configuration but clears all spending data.
+        """
+        with self._lock:
+            config = self._state.config  # Preserve config
+            self._state = BudgetState(config=config)
+            self._save_state()
+            logger.info("Reset all budget spending")
+
+
+def estimate_cost(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> float:
+    """Estimate cost for a Claude API call.
+
+    Based on current pricing as of 2024.
+
+    Args:
+        model: Model name
+        prompt_tokens: Number of input tokens
+        completion_tokens: Number of output tokens
+
+    Returns:
+        Estimated cost in USD
+    """
+    # Pricing per 1M tokens (approximate)
+    pricing = {
+        "claude-opus-4": {"input": 15.0, "output": 75.0},
+        "claude-sonnet-4": {"input": 3.0, "output": 15.0},
+        "claude-haiku-3.5": {"input": 0.80, "output": 4.0},
+        # Fallbacks
+        "opus": {"input": 15.0, "output": 75.0},
+        "sonnet": {"input": 3.0, "output": 15.0},
+        "haiku": {"input": 0.80, "output": 4.0},
+    }
+
+    # Normalize model name
+    model_lower = model.lower()
+    model_prices = None
+
+    for key, prices in pricing.items():
+        if key in model_lower:
+            model_prices = prices
+            break
+
+    if model_prices is None:
+        # Default to sonnet pricing
+        model_prices = pricing["sonnet"]
+
+    input_cost = (prompt_tokens / 1_000_000) * model_prices["input"]
+    output_cost = (completion_tokens / 1_000_000) * model_prices["output"]
+
+    return input_cost + output_cost

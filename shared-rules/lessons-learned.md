@@ -2,8 +2,8 @@
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.3 -->
-<!-- Last Updated: 2026-01-21 -->
+<!-- Version: 1.4 -->
+<!-- Last Updated: 2026-01-22 -->
 
 ## How to Add a Lesson
 
@@ -16,6 +16,42 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - Enhanced CLI Utilization for Quality and Automation
+
+- **Issue**: Claude CLI tools used in basic single-shot manner, missing powerful quality-enhancing features like plan mode, session continuity, schema validation, and audit trails
+- **Root Cause**: Enhanced CLI flags (`--permission-mode plan`, `--resume`, `--json-schema`, `--max-budget-usd`) were not utilized by the orchestrator
+- **Fix**: Implemented 8 enhancements across 4 phases:
+  1. **Plan Mode**: Auto-detect when to use `--permission-mode plan` (files ≥ 3 OR high complexity)
+  2. **Session Continuity**: `SessionManager` for `--resume`/`--session-id` across Ralph loop iterations
+  3. **Error Context Preservation**: `ErrorContextManager` with auto-classification and suggestions for intelligent retries
+  4. **Comprehensive Audit Trail**: Thread-safe JSONL logging of all CLI invocations with timing, costs, and outcomes
+  5. **JSON Schema Validation**: `--json-schema` support for structured output enforcement
+  6. **Budget Control**: `BudgetManager` with project/task/invocation limits via `--max-budget-usd`
+  7. **Fallback Model**: `--fallback-model sonnet` for automatic failover
+  8. **Enhanced ClaudeAgent**: Unified interface integrating all features with autonomous decision-making
+- **Prevention**:
+  - Use plan mode for ≥3 files OR high complexity tasks (automatic)
+  - Resume sessions for Ralph iterations 2+ (preserves debugging context)
+  - Always record errors and use enhanced retry prompts
+  - Set budget limits on all invocations (default $1.00)
+  - Use `should_use_plan_mode()` to let agent decide automatically
+- **Applies To**: claude
+- **Files Changed**:
+  - `orchestrator/agents/session_manager.py` (new - 280 lines)
+  - `orchestrator/agents/error_context.py` (new - 400 lines)
+  - `orchestrator/agents/budget.py` (new - 450 lines)
+  - `orchestrator/audit/__init__.py` (new)
+  - `orchestrator/audit/trail.py` (new - 350 lines)
+  - `orchestrator/agents/claude_agent.py` (major rewrite - 565 lines)
+  - `orchestrator/agents/base.py` (modified - audit integration)
+  - `orchestrator/agents/__init__.py` (modified - exports)
+  - `shared-rules/cli-reference.md` (updated - enhanced flags, decision matrix, autonomous guidelines)
+  - `tests/test_session_manager.py` (new - 21 tests)
+  - `tests/test_audit_trail.py` (new - 22 tests)
+  - `tests/test_error_context.py` (new - 32 tests)
+  - `tests/test_budget.py` (new - 25 tests)
+  - `tests/test_claude_agent_enhanced.py` (new - 30 tests)
 
 ### 2026-01-21 - Enhanced Nested Architecture with Safety Features
 

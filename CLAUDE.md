@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-21 19:49:11 -->
+<!-- Last synced: 2026-01-22 09:36:50 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -586,7 +586,7 @@ The following rules apply to all agents in the workflow.
 - Include `score` field: 1-10 scale
 
 ### Context Files
-- Always read AGENTS.md for workflow rules
+- Always read CLAUDE.md for workflow rules (or agent-specific context file)
 - Always read PRODUCT.md for requirements
 - Check .workflow/state.json for current state
 
@@ -596,7 +596,7 @@ The following rules apply to all agents in the workflow.
 - Log the error clearly with context
 - Suggest remediation steps
 - Don't proceed with broken state
-- Update blockers.md if blocked
+- Escalate to human if blocked (via workflow interrupt)
 
 ### When Uncertain
 - Ask for clarification rather than guess
@@ -933,7 +933,7 @@ This is the authoritative reference for CLI tool invocation. Always use these pa
 claude -p "Your prompt here" --output-format json
 ```
 
-### Key Flags
+### Key Flags (Basic)
 | Flag | Purpose | Example |
 |------|---------|---------|
 | `-p` | Prompt (non-interactive) | `-p "What is 2+2?"` |
@@ -941,7 +941,49 @@ claude -p "Your prompt here" --output-format json
 | `--allowedTools` | Restrict tools | `--allowedTools "Read,Write,Edit"` |
 | `--max-turns` | Limit turns | `--max-turns 10` |
 
-### Full Example
+### Enhanced Flags (Use These!)
+| Flag | Purpose | When to Use |
+|------|---------|-------------|
+| `--permission-mode plan` | Plan before implementing | Tasks touching ≥3 files OR high complexity |
+| `--resume <session-id>` | Continue previous session | Ralph loop iterations (preserves debugging context) |
+| `--session-id <id>` | Set session ID for tracking | New task sessions |
+| `--json-schema <path>` | Enforce output structure | Use `schemas/plan-schema.json` or `schemas/tasks-schema.json` |
+| `--max-budget-usd <n>` | Limit API cost | Always set (default: $1.00 per invocation) |
+| `--fallback-model <model>` | Failover model | Use `sonnet` (default) or `haiku` |
+
+### Decision Matrix: When to Use Enhanced Features
+
+| Scenario | Plan Mode | Session | Budget | Schema |
+|----------|-----------|---------|--------|--------|
+| Simple 1-2 file task | ❌ | ❌ | ✅ $0.50 | ❌ |
+| Multi-file task (≥3 files) | ✅ | ❌ | ✅ $1.00 | ✅ if structured output |
+| High complexity task | ✅ | ❌ | ✅ $2.00 | ✅ |
+| Ralph loop iteration 1 | ❌ | New session | ✅ $0.50 | ❌ |
+| Ralph loop iteration 2+ | ❌ | ✅ Resume | ✅ $0.50 | ❌ |
+| Planning phase | ✅ Always | ❌ | ✅ $1.00 | ✅ plan-schema.json |
+
+### Full Example (Enhanced)
+```bash
+# Complex multi-file task with all features
+claude -p "Implement user authentication" \
+    --output-format json \
+    --permission-mode plan \
+    --max-budget-usd 2.00 \
+    --fallback-model sonnet \
+    --json-schema schemas/tasks-schema.json \
+    --allowedTools "Read,Write,Edit,Bash(npm*),Bash(pytest*)" \
+    --max-turns 50
+
+# Ralph loop iteration with session continuity
+claude -p "Fix failing tests" \
+    --output-format json \
+    --resume T1-abc123def456 \
+    --max-budget-usd 0.50 \
+    --allowedTools "Read,Write,Edit,Bash(pytest*)" \
+    --max-turns 15
+```
+
+### Basic Example
 ```bash
 claude -p "Analyze this code" \
     --output-format json \
@@ -1143,9 +1185,148 @@ export PARALLEL_WORKERS=3
 
 ### Agent CLI Overrides
 ```bash
-export CURSOR_MODEL=gpt-4.5-turbo    # Override Cursor model
+export CURSOR_MODEL=gpt-4-turbo      # Override Cursor model
 export GEMINI_MODEL=gemini-2.0-flash  # Override Gemini model
 ```
+
+---
+
+## Python Orchestrator Modules (For Claude as Tech Lead)
+
+These modules are available for autonomous decision-making. **Use them directly** without asking for permission.
+
+### Session Manager
+```python
+from orchestrator.agents import SessionManager
+
+# Automatic session continuity for Ralph loop iterations
+manager = SessionManager(project_dir)
+
+# Get resume args for existing session (maintains debugging context)
+args = manager.get_resume_args("T1")  # Returns ["--resume", "session-id"] or []
+
+# Create new session when starting a task
+session = manager.create_session("T1")
+
+# Close session when task completes
+manager.close_session("T1")
+```
+
+**Decision Rule**: Always use session continuity for Ralph loop iterations 2+. Fresh sessions for new tasks.
+
+### Error Context Manager
+```python
+from orchestrator.agents import ErrorContextManager
+
+# Automatically record and learn from failures
+manager = ErrorContextManager(project_dir)
+
+# Record error when task fails
+context = manager.record_error(
+    task_id="T1",
+    error_message="AssertionError: expected 5, got 3",
+    attempt=1,
+    stderr=stderr_output,
+)
+
+# Build enhanced retry prompt (includes error history + suggestions)
+retry_prompt = manager.build_retry_prompt("T1", original_prompt)
+
+# Clear errors when task succeeds
+manager.clear_task_errors("T1")
+```
+
+**Decision Rule**: Always record errors. Always use enhanced retry prompts. Clear on success.
+
+### Budget Manager
+```python
+from orchestrator.agents import BudgetManager
+
+manager = BudgetManager(project_dir)
+
+# Check before spending
+if manager.can_spend("T1", 0.50):
+    # Proceed with invocation
+    pass
+
+# Record actual spend
+manager.record_spend("T1", "claude", actual_cost)
+
+# Get budget for --max-budget-usd flag
+budget = manager.get_invocation_budget("T1")  # Returns float
+
+# Check remaining
+remaining = manager.get_task_remaining("T1")
+```
+
+**Decision Rule**: Always pass `--max-budget-usd` to CLI. Default $1.00 per invocation, $0.50 for Ralph iterations.
+
+### Audit Trail
+```python
+from orchestrator.audit import get_project_audit_trail
+
+trail = get_project_audit_trail(project_dir)
+
+# Record invocations (auto-integrated into BaseAgent.run())
+with trail.record("claude", "T1", prompt) as entry:
+    result = run_command(...)
+    entry.set_result(success=True, exit_code=0, cost_usd=0.05)
+
+# Query for debugging
+history = trail.get_task_history("T1")
+stats = trail.get_statistics()
+```
+
+**Decision Rule**: Audit trail is automatic. Use `query()` and `get_statistics()` for debugging failed tasks.
+
+### ClaudeAgent (Enhanced)
+```python
+from orchestrator.agents import ClaudeAgent
+
+agent = ClaudeAgent(
+    project_dir,
+    enable_session_continuity=True,  # Default: True
+    default_fallback_model="sonnet",  # Default: sonnet
+    default_budget_usd=1.00,          # Optional: per-invocation limit
+)
+
+# Auto-detects when to use plan mode
+result = agent.run_task(task)  # Uses plan mode if task.files >= 3
+
+# Or explicit control
+result = agent.run(
+    prompt,
+    task_id="T1",
+    use_plan_mode=True,
+    budget_usd=2.00,
+    output_schema="plan-schema.json",
+)
+```
+
+**Decision Rule**: Let `should_use_plan_mode()` decide automatically. Override only when you have specific reasons.
+
+---
+
+## Autonomous Decision Guidelines
+
+**DO automatically (no permission needed):**
+- Use plan mode for ≥3 files or high complexity
+- Resume sessions for Ralph iterations 2+
+- Record errors and use enhanced retry prompts
+- Set budget limits on all invocations
+- Use fallback model (sonnet by default)
+
+**DO NOT do without asking:**
+- Skip budget limits entirely
+- Force plan mode on simple tasks
+- Clear error history before task actually succeeds
+- Change project-wide budget limits
+
+**When uncertain, prefer:**
+- Plan mode over no plan mode (safer for quality)
+- Session continuity over fresh context (better debugging)
+- Lower budget with fallback over higher budget (cost control)
+- Recording errors over ignoring them (learn from failures)
 
 ---
 
@@ -1206,8 +1387,8 @@ python -m orchestrator --project my-app --resume
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.3 -->
-<!-- Last Updated: 2026-01-21 -->
+<!-- Version: 1.4 -->
+<!-- Last Updated: 2026-01-22 -->
 
 ## How to Add a Lesson
 
@@ -1220,6 +1401,42 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - Enhanced CLI Utilization for Quality and Automation
+
+- **Issue**: Claude CLI tools used in basic single-shot manner, missing powerful quality-enhancing features like plan mode, session continuity, schema validation, and audit trails
+- **Root Cause**: Enhanced CLI flags (`--permission-mode plan`, `--resume`, `--json-schema`, `--max-budget-usd`) were not utilized by the orchestrator
+- **Fix**: Implemented 8 enhancements across 4 phases:
+  1. **Plan Mode**: Auto-detect when to use `--permission-mode plan` (files ≥ 3 OR high complexity)
+  2. **Session Continuity**: `SessionManager` for `--resume`/`--session-id` across Ralph loop iterations
+  3. **Error Context Preservation**: `ErrorContextManager` with auto-classification and suggestions for intelligent retries
+  4. **Comprehensive Audit Trail**: Thread-safe JSONL logging of all CLI invocations with timing, costs, and outcomes
+  5. **JSON Schema Validation**: `--json-schema` support for structured output enforcement
+  6. **Budget Control**: `BudgetManager` with project/task/invocation limits via `--max-budget-usd`
+  7. **Fallback Model**: `--fallback-model sonnet` for automatic failover
+  8. **Enhanced ClaudeAgent**: Unified interface integrating all features with autonomous decision-making
+- **Prevention**:
+  - Use plan mode for ≥3 files OR high complexity tasks (automatic)
+  - Resume sessions for Ralph iterations 2+ (preserves debugging context)
+  - Always record errors and use enhanced retry prompts
+  - Set budget limits on all invocations (default $1.00)
+  - Use `should_use_plan_mode()` to let agent decide automatically
+- **Applies To**: claude
+- **Files Changed**:
+  - `orchestrator/agents/session_manager.py` (new - 280 lines)
+  - `orchestrator/agents/error_context.py` (new - 400 lines)
+  - `orchestrator/agents/budget.py` (new - 450 lines)
+  - `orchestrator/audit/__init__.py` (new)
+  - `orchestrator/audit/trail.py` (new - 350 lines)
+  - `orchestrator/agents/claude_agent.py` (major rewrite - 565 lines)
+  - `orchestrator/agents/base.py` (modified - audit integration)
+  - `orchestrator/agents/__init__.py` (modified - exports)
+  - `shared-rules/cli-reference.md` (updated - enhanced flags, decision matrix, autonomous guidelines)
+  - `tests/test_session_manager.py` (new - 21 tests)
+  - `tests/test_audit_trail.py` (new - 22 tests)
+  - `tests/test_error_context.py` (new - 32 tests)
+  - `tests/test_budget.py` (new - 25 tests)
+  - `tests/test_claude_agent_enhanced.py` (new - 30 tests)
 
 ### 2026-01-21 - Enhanced Nested Architecture with Safety Features
 

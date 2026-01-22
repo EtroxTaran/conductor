@@ -1,16 +1,41 @@
-"""Claude Code CLI agent wrapper."""
+"""Claude Code CLI agent wrapper with enhanced features.
 
+Supports advanced CLI features:
+- Plan Mode: --permission-mode plan for complex tasks
+- Session Continuity: --resume and --session-id for iteration context
+- JSON Schema Validation: --json-schema for structured output
+- Budget Control: --max-budget-usd for cost management
+- Fallback Model: --fallback-model for resilience
+
+Reference: https://docs.anthropic.com/claude-code/cli
+"""
+
+import json
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from .base import BaseAgent
+from .base import BaseAgent, AgentResult
+from .session_manager import SessionManager, extract_session_from_cli_response
+
+
+# Complexity thresholds for plan mode
+PLAN_MODE_FILE_THRESHOLD = 3  # Use plan mode if touching >= 3 files
+PLAN_MODE_ALWAYS_COMPLEXITIES = ["high"]  # Always use plan mode for these
 
 
 class ClaudeAgent(BaseAgent):
-    """Wrapper for Claude Code CLI.
+    """Wrapper for Claude Code CLI with enhanced features.
 
     Claude Code is used for planning and implementation phases.
     It reads context from CLAUDE.md and .claude/system.md.
+
+    Enhanced features:
+    - Plan mode detection based on task complexity
+    - Session continuity for iterative refinement
+    - JSON schema validation for structured output
+    - Budget control per-invocation
+    - Fallback model configuration
     """
 
     name = "claude"
@@ -21,6 +46,11 @@ class ClaudeAgent(BaseAgent):
         timeout: int = 600,
         allowed_tools: Optional[list[str]] = None,
         system_prompt_file: Optional[str] = None,
+        # Enhanced features
+        enable_session_continuity: bool = True,
+        default_fallback_model: Optional[str] = "sonnet",
+        default_budget_usd: Optional[float] = None,
+        schema_dir: Optional[Path] = None,
     ):
         """Initialize Claude agent.
 
@@ -29,6 +59,12 @@ class ClaudeAgent(BaseAgent):
             timeout: Timeout in seconds (default 10 minutes for complex tasks)
             allowed_tools: List of allowed tool patterns
             system_prompt_file: Path to system prompt file relative to project
+
+            Enhanced features:
+            enable_session_continuity: Enable session tracking for iterative tasks
+            default_fallback_model: Default fallback model (sonnet, haiku)
+            default_budget_usd: Default budget limit per invocation
+            schema_dir: Directory containing JSON schemas
         """
         super().__init__(project_dir, timeout)
         self.allowed_tools = allowed_tools or [
@@ -43,6 +79,31 @@ class ClaudeAgent(BaseAgent):
         ]
         self.system_prompt_file = system_prompt_file
 
+        # Enhanced features
+        self.enable_session_continuity = enable_session_continuity
+        self.default_fallback_model = default_fallback_model
+        self.default_budget_usd = default_budget_usd
+        self.schema_dir = schema_dir or self._find_schema_dir()
+
+        # Session manager for continuity
+        self._session_manager: Optional[SessionManager] = None
+        if enable_session_continuity:
+            self._session_manager = SessionManager(project_dir)
+
+    def _find_schema_dir(self) -> Optional[Path]:
+        """Find the schemas directory."""
+        # Try to find relative to project
+        for parent in [self.project_dir, self.project_dir.parent]:
+            schema_dir = parent / "schemas"
+            if schema_dir.is_dir():
+                return schema_dir
+        return None
+
+    @property
+    def session_manager(self) -> Optional[SessionManager]:
+        """Get the session manager."""
+        return self._session_manager
+
     def get_cli_command(self) -> str:
         """Get the CLI command."""
         return "claude"
@@ -51,19 +112,68 @@ class ClaudeAgent(BaseAgent):
         """Get Claude's context file."""
         return self.project_dir / "CLAUDE.md"
 
+    def should_use_plan_mode(
+        self,
+        files_to_create: Optional[list[str]] = None,
+        files_to_modify: Optional[list[str]] = None,
+        estimated_complexity: Optional[str] = None,
+    ) -> bool:
+        """Determine if plan mode should be used for a task.
+
+        Plan mode (`--permission-mode plan`) makes Claude:
+        1. First explore and analyze the codebase
+        2. Present a detailed plan for approval
+        3. Only then execute the plan
+
+        This is valuable for complex tasks to ensure good architecture.
+
+        Args:
+            files_to_create: List of files to create
+            files_to_modify: List of files to modify
+            estimated_complexity: Complexity estimate (low, medium, high)
+
+        Returns:
+            True if plan mode should be used
+        """
+        # Always use plan mode for high complexity tasks
+        if estimated_complexity in PLAN_MODE_ALWAYS_COMPLEXITIES:
+            return True
+
+        # Use plan mode if touching many files
+        total_files = len(files_to_create or []) + len(files_to_modify or [])
+        if total_files >= PLAN_MODE_FILE_THRESHOLD:
+            return True
+
+        return False
+
     def build_command(
         self,
         prompt: str,
         output_format: str = "json",
         max_turns: Optional[int] = None,
+        # Enhanced features
+        use_plan_mode: bool = False,
+        task_id: Optional[str] = None,
+        resume_session: bool = True,
+        output_schema: Optional[str] = None,
+        budget_usd: Optional[float] = None,
+        fallback_model: Optional[str] = None,
         **kwargs,
     ) -> list[str]:
-        """Build the Claude CLI command.
+        """Build the Claude CLI command with enhanced features.
 
         Args:
             prompt: The prompt to send
             output_format: Output format (json, text, stream-json)
             max_turns: Maximum number of agentic turns
+
+            Enhanced features:
+            use_plan_mode: Use --permission-mode plan
+            task_id: Task ID for session management
+            resume_session: Whether to resume existing session
+            output_schema: Path to JSON schema file (relative to schema_dir)
+            budget_usd: Maximum budget for this invocation
+            fallback_model: Fallback model (sonnet, haiku)
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -76,6 +186,41 @@ class ClaudeAgent(BaseAgent):
             "--output-format",
             output_format,
         ]
+
+        # Plan mode for complex tasks
+        if use_plan_mode:
+            command.extend(["--permission-mode", "plan"])
+
+        # Session continuity
+        if task_id and self._session_manager:
+            if resume_session:
+                resume_args = self._session_manager.get_resume_args(task_id)
+                if resume_args:
+                    command.extend(resume_args)
+                else:
+                    # New session - set session ID for tracking
+                    session_args = self._session_manager.get_session_id_args(task_id)
+                    command.extend(session_args)
+            else:
+                # Explicitly not resuming - create new session
+                session = self._session_manager.create_session(task_id)
+                command.extend(["--session-id", session.session_id])
+
+        # JSON schema validation
+        if output_schema and self.schema_dir:
+            schema_path = self.schema_dir / output_schema
+            if schema_path.exists():
+                command.extend(["--json-schema", str(schema_path)])
+
+        # Budget control
+        effective_budget = budget_usd or self.default_budget_usd
+        if effective_budget is not None:
+            command.extend(["--max-budget-usd", str(effective_budget)])
+
+        # Fallback model
+        effective_fallback = fallback_model or self.default_fallback_model
+        if effective_fallback:
+            command.extend(["--fallback-model", effective_fallback])
 
         # Add system prompt file if specified
         if self.system_prompt_file:
@@ -97,16 +242,79 @@ class ClaudeAgent(BaseAgent):
 
         return command
 
+    def run(
+        self,
+        prompt: str,
+        output_file: Optional[Path] = None,
+        phase: Optional[int] = None,
+        # Enhanced features
+        task_id: Optional[str] = None,
+        use_plan_mode: Optional[bool] = None,
+        output_schema: Optional[str] = None,
+        budget_usd: Optional[float] = None,
+        **kwargs,
+    ) -> AgentResult:
+        """Execute the agent with enhanced features.
+
+        Args:
+            prompt: The prompt to send to the agent
+            output_file: Optional file to write output to
+            phase: Optional phase number for phase-specific timeout
+            task_id: Task ID for session management
+            use_plan_mode: Whether to use plan mode (auto-detect if None)
+            output_schema: JSON schema for output validation
+            budget_usd: Budget limit for this invocation
+            **kwargs: Additional arguments passed to build_command
+
+        Returns:
+            AgentResult with execution details
+        """
+        # Auto-detect plan mode if not specified
+        if use_plan_mode is None and "files_to_create" in kwargs:
+            use_plan_mode = self.should_use_plan_mode(
+                files_to_create=kwargs.get("files_to_create"),
+                files_to_modify=kwargs.get("files_to_modify"),
+                estimated_complexity=kwargs.get("estimated_complexity"),
+            )
+
+        # Run with enhanced features
+        result = super().run(
+            prompt=prompt,
+            output_file=output_file,
+            phase=phase,
+            task_id=task_id,
+            use_plan_mode=use_plan_mode or False,
+            output_schema=output_schema,
+            budget_usd=budget_usd,
+            **kwargs,
+        )
+
+        # Update session after successful run
+        if task_id and self._session_manager and result.success:
+            self._session_manager.touch_session(task_id)
+
+            # Try to capture session ID from output
+            if result.output:
+                self._session_manager.capture_session_id_from_output(
+                    task_id, result.output
+                )
+
+        return result
+
     def run_planning(
         self,
         product_spec: str,
         output_file: Optional[Path] = None,
-    ):
-        """Run Claude for planning phase.
+        task_id: Optional[str] = None,
+    ) -> AgentResult:
+        """Run Claude for planning phase with plan mode.
+
+        Uses plan mode by default since planning is inherently complex.
 
         Args:
             product_spec: Content of PRODUCT.md
             output_file: File to write plan to
+            task_id: Optional task ID for session tracking
 
         Returns:
             AgentResult with the plan
@@ -149,20 +357,30 @@ Focus on:
 3. Defining clear dependencies between tasks
 4. Planning tests before implementation (TDD approach)"""
 
-        return self.run(prompt, output_file=output_file)
+        return self.run(
+            prompt,
+            output_file=output_file,
+            use_plan_mode=True,  # Always use plan mode for planning
+            task_id=task_id,
+            output_schema="plan-schema.json",
+        )
 
     def run_implementation(
         self,
         plan: dict,
         feedback: Optional[dict] = None,
         output_file: Optional[Path] = None,
-    ):
+        task_id: Optional[str] = None,
+    ) -> AgentResult:
         """Run Claude for implementation phase.
+
+        Uses plan mode if the plan indicates high complexity.
 
         Args:
             plan: The approved plan from Phase 1
             feedback: Consolidated feedback from Phase 2
             output_file: File to write results to
+            task_id: Task ID for session tracking
 
         Returns:
             AgentResult with implementation details
@@ -172,13 +390,26 @@ Focus on:
             feedback_section = f"""
 
 FEEDBACK TO ADDRESS:
-{feedback}
+{json.dumps(feedback, indent=2)}
 """
+
+        # Count files to determine complexity
+        files_to_create = []
+        files_to_modify = []
+        for phase in plan.get("phases", []):
+            for task in phase.get("tasks", []):
+                files = task.get("files", [])
+                for f in files:
+                    # Heuristic: existing files are modified, new files created
+                    if (self.project_dir / f).exists():
+                        files_to_modify.append(f)
+                    else:
+                        files_to_create.append(f)
 
         prompt = f"""You are implementing a software feature based on an approved plan.
 
 IMPLEMENTATION PLAN:
-{plan}
+{json.dumps(plan, indent=2)}
 {feedback_section}
 
 INSTRUCTIONS:
@@ -211,4 +442,123 @@ At the end, provide a summary:
     }}
 }}"""
 
-        return self.run(prompt, output_file=output_file, max_turns=50)
+        use_plan_mode = self.should_use_plan_mode(
+            files_to_create=files_to_create,
+            files_to_modify=files_to_modify,
+            estimated_complexity=plan.get("estimated_complexity"),
+        )
+
+        return self.run(
+            prompt,
+            output_file=output_file,
+            max_turns=50,
+            task_id=task_id,
+            use_plan_mode=use_plan_mode,
+            files_to_create=files_to_create,
+            files_to_modify=files_to_modify,
+        )
+
+    def run_task(
+        self,
+        task: dict[str, Any],
+        output_file: Optional[Path] = None,
+        resume_session: bool = True,
+    ) -> AgentResult:
+        """Run Claude for a single task implementation.
+
+        Automatically determines whether to use plan mode based on
+        task complexity (files affected, estimated complexity).
+
+        Args:
+            task: Task definition with id, title, files_to_create, etc.
+            output_file: File to write results to
+            resume_session: Whether to resume existing session
+
+        Returns:
+            AgentResult with task completion details
+        """
+        task_id = task.get("id", "unknown")
+        title = task.get("title", "")
+        description = task.get("description", task.get("user_story", ""))
+        files_to_create = task.get("files_to_create", [])
+        files_to_modify = task.get("files_to_modify", [])
+        test_files = task.get("test_files", [])
+        acceptance_criteria = task.get("acceptance_criteria", [])
+        estimated_complexity = task.get("estimated_complexity")
+
+        prompt = f"""## Task: {task_id} - {title}
+
+{description}
+
+## Acceptance Criteria
+{self._format_criteria(acceptance_criteria)}
+
+## Files to Create
+{self._format_list(files_to_create)}
+
+## Files to Modify
+{self._format_list(files_to_modify)}
+
+## Test Files
+{self._format_list(test_files)}
+
+## Instructions
+1. Implement using TDD (write/update tests first)
+2. Follow existing code patterns in the project
+3. Signal completion with: <promise>DONE</promise>
+
+## Output
+When complete, output a JSON object:
+{{
+    "task_id": "{task_id}",
+    "status": "completed",
+    "files_created": [],
+    "files_modified": [],
+    "tests_written": [],
+    "tests_passed": true,
+    "implementation_notes": "Brief notes"
+}}"""
+
+        use_plan_mode = self.should_use_plan_mode(
+            files_to_create=files_to_create,
+            files_to_modify=files_to_modify,
+            estimated_complexity=estimated_complexity,
+        )
+
+        return self.run(
+            prompt,
+            output_file=output_file,
+            task_id=task_id,
+            use_plan_mode=use_plan_mode,
+            resume_session=resume_session,
+            files_to_create=files_to_create,
+            files_to_modify=files_to_modify,
+            estimated_complexity=estimated_complexity,
+        )
+
+    def close_task_session(self, task_id: str) -> bool:
+        """Close session for a completed task.
+
+        Call this when a task is fully completed or failed permanently.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            True if session was closed
+        """
+        if self._session_manager:
+            return self._session_manager.close_session(task_id)
+        return False
+
+    def _format_criteria(self, criteria: list[str]) -> str:
+        """Format acceptance criteria."""
+        if not criteria:
+            return "- No specific criteria defined"
+        return "\n".join(f"- [ ] {c}" for c in criteria)
+
+    def _format_list(self, items: list[str]) -> str:
+        """Format a file list."""
+        if not items:
+            return "- None"
+        return "\n".join(f"- {item}" for item in items)
