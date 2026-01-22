@@ -82,7 +82,25 @@ class StatusDashboard:
         return f"{left}{fill * (self.width - 2)}{right}"
 
     def _load_state(self) -> Optional[dict]:
-        """Load workflow state."""
+        """Load workflow state.
+
+        Uses StateProjector to get state from checkpoint if available,
+        falling back to state.json for backwards compatibility.
+        """
+        try:
+            from .utils.state_projector import StateProjector
+            projector = StateProjector(self.project_dir)
+            state = projector.get_state()
+            if state is not None:
+                return state
+        except ImportError:
+            pass  # StateProjector not available, fall back to direct read
+        except Exception as e:
+            # Log but don't fail - fall back to direct read
+            import logging
+            logging.getLogger(__name__).debug(f"StateProjector failed: {e}")
+
+        # Fallback: direct read from state.json
         state_file = self.workflow_dir / "state.json"
         if not state_file.exists():
             return None

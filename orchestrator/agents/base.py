@@ -36,6 +36,8 @@ class AgentResult:
         session_id: Session ID if using session continuity
         cost_usd: Estimated cost if available
         model: Model used if known
+        schema_validated: Whether output was validated against a schema
+        validation_errors: List of validation errors if schema validation failed
     """
 
     success: bool
@@ -47,6 +49,8 @@ class AgentResult:
     session_id: Optional[str] = None
     cost_usd: Optional[float] = None
     model: Optional[str] = None
+    schema_validated: bool = False
+    validation_errors: Optional[list[str]] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -60,6 +64,8 @@ class AgentResult:
             "session_id": self.session_id,
             "cost_usd": self.cost_usd,
             "model": self.model,
+            "schema_validated": self.schema_validated,
+            "validation_errors": self.validation_errors,
         }
 
 
@@ -368,4 +374,82 @@ class BaseAgent(ABC):
         context_file = self.get_context_file()
         if context_file and context_file.exists():
             return context_file.read_text()
+        return None
+
+    # Schema cache for validation
+    _schema_cache: dict[str, dict] = {}
+
+    def validate_output(
+        self,
+        parsed_output: dict,
+        schema_name: str,
+        strict: bool = False,
+    ) -> tuple[bool, list[str]]:
+        """Validate parsed output against a JSON schema.
+
+        Args:
+            parsed_output: The parsed JSON output to validate
+            schema_name: Name of the schema file (e.g., 'plan-schema.json')
+            strict: If True, validation failures are treated as errors
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        try:
+            import jsonschema
+        except ImportError:
+            logger.warning("jsonschema not installed - skipping validation")
+            return (True, [])  # Degrade gracefully
+
+        schema = self._load_schema(schema_name)
+        if schema is None:
+            if strict:
+                return (False, [f"Schema '{schema_name}' not found"])
+            return (True, [])
+
+        try:
+            jsonschema.validate(instance=parsed_output, schema=schema)
+            return (True, [])
+        except jsonschema.ValidationError as e:
+            errors = [f"Validation error at {'.'.join(str(p) for p in e.absolute_path)}: {e.message}"]
+            return (False, errors)
+        except jsonschema.SchemaError as e:
+            errors = [f"Invalid schema '{schema_name}': {e.message}"]
+            return (False, errors)
+
+    def _load_schema(self, schema_name: str) -> Optional[dict]:
+        """Load and cache a JSON schema.
+
+        Schemas are searched in:
+        1. project_dir/schemas/
+        2. orchestrator/schemas/
+        3. ~/.config/meta-architect/schemas/
+
+        Args:
+            schema_name: Name of the schema file
+
+        Returns:
+            Schema dict or None if not found
+        """
+        if schema_name in self._schema_cache:
+            return self._schema_cache[schema_name]
+
+        # Search paths for schemas
+        search_paths = [
+            self.project_dir / "schemas" / schema_name,
+            Path(__file__).parent.parent / "schemas" / schema_name,
+            Path.home() / ".config" / "meta-architect" / "schemas" / schema_name,
+        ]
+
+        for path in search_paths:
+            if path.exists():
+                try:
+                    schema = json.loads(path.read_text())
+                    self._schema_cache[schema_name] = schema
+                    return schema
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in schema {path}: {e}")
+                    return None
+
+        logger.debug(f"Schema '{schema_name}' not found in search paths")
         return None

@@ -43,6 +43,7 @@ from .nodes import (
     implement_task_node,
     implement_tasks_parallel_node,
     verify_task_node,
+    verify_tasks_parallel_node,
     write_tests_node,
     fix_bug_node,
     # Discussion and Research nodes (GSD pattern)
@@ -72,6 +73,7 @@ from .routers import (
     implement_task_router,
     implement_tasks_parallel_router,
     verify_task_router,
+    verify_tasks_parallel_router,
     write_tests_router,
     fix_bug_router,
     # Discussion and Research routers (GSD pattern)
@@ -255,8 +257,10 @@ def create_workflow_graph(
     graph.add_node("select_task", select_next_task_node)
     graph.add_node("write_tests", write_tests_node)
     graph.add_node("implement_task", implement_task_node, retry=implementation_retry_policy)
+    graph.add_node("implement_tasks_parallel", implement_tasks_parallel_node, retry=implementation_retry_policy)
     graph.add_node("fix_bug", fix_bug_node)
     graph.add_node("verify_task", verify_task_node)
+    graph.add_node("verify_tasks_parallel", verify_tasks_parallel_node)
 
     # Legacy implementation node (kept for compatibility)
     graph.add_node("implementation", implementation_node, retry=implementation_retry_policy)
@@ -438,6 +442,17 @@ def create_workflow_graph(
         },
     )
 
+    # Verify tasks parallel → LOOP BACK to select_task or retry
+    graph.add_conditional_edges(
+        "verify_tasks_parallel",
+        verify_tasks_parallel_router,
+        {
+            "select_task": "select_task",  # LOOP BACK - get next batch
+            "implement_tasks_parallel": "implement_tasks_parallel",  # Retry batch
+            "human_escalation": "human_escalation",
+        },
+    )
+
     # Fix bug → verify_task
     graph.add_conditional_edges(
         "fix_bug",
@@ -560,13 +575,19 @@ class WorkflowRunner:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # Check environment for checkpointer preference
-        checkpointer_type = os.environ.get("LANGGRAPH_CHECKPOINTER", "memory")
-        if checkpointer_type == "sqlite" or use_persistent_checkpointer:
-            self.checkpointer = self._create_sqlite_checkpointer()
-        else:
-            # Default: MemorySaver (fast but non-persistent)
+        # Default to SQLite for persistence (change from "memory" to "sqlite")
+        checkpointer_type = os.environ.get("LANGGRAPH_CHECKPOINTER", "sqlite")
+        if checkpointer_type == "memory":
+            # Explicit memory mode - fast but non-persistent (for testing only)
             self.checkpointer = MemorySaver()
-            logger.info("Using MemorySaver (state lost on restart). Set LANGGRAPH_CHECKPOINTER=sqlite for persistence.")
+            logger.warning(
+                "Using MemorySaver - state will be lost on restart. "
+                "This should only be used for testing. "
+                "Set LANGGRAPH_CHECKPOINTER=sqlite for persistence."
+            )
+        else:
+            # Default: SQLite persistence
+            self.checkpointer = self._create_sqlite_checkpointer()
 
         # Create the graph
         self.graph = create_workflow_graph(checkpointer=self.checkpointer)
@@ -575,40 +596,42 @@ class WorkflowRunner:
         self.thread_id = f"workflow-{self.project_name}"
 
     def _create_sqlite_checkpointer(self) -> Any:
-        """Create AsyncSqliteSaver for persistent checkpoints.
+        """Create SqliteSaver for persistent checkpoints.
+
+        Uses synchronous SqliteSaver which works with both sync and async
+        LangGraph operations. The async version requires context manager usage
+        which is incompatible with the graph compilation flow.
 
         Returns:
-            AsyncSqliteSaver or MemorySaver as fallback
+            SqliteSaver instance
+
+        Raises:
+            RuntimeError: If SQLite checkpointer cannot be created
         """
         try:
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+            from langgraph.checkpoint.sqlite import SqliteSaver
+            import sqlite3
 
             db_path = self.checkpoint_dir / "checkpoints.db"
             # Ensure checkpoint directory exists
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create connection string for SQLite
-            conn_string = f"sqlite:///{db_path}"
-
-            # Create the checkpointer using from_conn_string (sync factory method)
-            # This returns an AsyncSqliteSaver that manages its own async connection
-            checkpointer = AsyncSqliteSaver.from_conn_string(str(db_path))
-            logger.info(f"Using AsyncSqliteSaver: {db_path}")
+            # Create SQLite connection and checkpointer
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            checkpointer = SqliteSaver(conn)
+            logger.info(f"Using SqliteSaver: {db_path}")
             return checkpointer
 
         except ImportError as e:
-            logger.warning(
-                f"Could not import AsyncSqliteSaver: {e}. "
-                "Install with: pip install aiosqlite langgraph-checkpoint-sqlite. "
-                "Falling back to MemorySaver."
-            )
-            return MemorySaver()
+            raise RuntimeError(
+                "SQLite checkpointer required but not available. "
+                "Install with: pip install langgraph-checkpoint-sqlite"
+            ) from e
         except Exception as e:
-            logger.warning(
-                f"Failed to create AsyncSqliteSaver: {e}. "
-                "Falling back to MemorySaver (state lost on restart)."
-            )
-            return MemorySaver()
+            raise RuntimeError(
+                f"Failed to create SQLite checkpointer: {e}. "
+                "Check that the checkpoint directory is writable."
+            ) from e
 
     async def run(
         self,

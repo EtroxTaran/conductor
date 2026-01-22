@@ -29,6 +29,7 @@ from .task import (
     implement_task_router,
     implement_tasks_parallel_router,
     verify_task_router,
+    verify_tasks_parallel_router,
 )
 from .write_tests import write_tests_router
 from .fix_bug import fix_bug_router

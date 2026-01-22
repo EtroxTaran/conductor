@@ -24,7 +24,7 @@ from .approval_gate import approval_gate_node
 from .task_breakdown import task_breakdown_node
 from .select_task import select_next_task_node
 from .implement_task import implement_task_node, implement_tasks_parallel_node
-from .verify_task import verify_task_node
+from .verify_task import verify_task_node, verify_tasks_parallel_node
 from .write_tests import write_tests_node
 from .fix_bug import fix_bug_node
 

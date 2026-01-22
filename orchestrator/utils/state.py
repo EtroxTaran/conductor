@@ -266,25 +266,38 @@ class StateManager:
     def state(self) -> WorkflowState:
         """Get current state, loading if necessary (thread-safe).
 
-        Returns a copy to prevent external mutation of internal state.
+        Returns the internal state directly. For external access where mutation
+        prevention is needed, use get_state_copy() instead.
         """
         with self._lock:
             if self._state is None:
                 self.load()
-            # Return a copy to prevent mutation - use from_dict(to_dict()) for deep copy
+            return self._state
+
+    def get_state_copy(self) -> WorkflowState:
+        """Get a copy of the current state (for external use where mutation should be prevented)."""
+        with self._lock:
+            if self._state is None:
+                self.load()
             return WorkflowState.from_dict(self._state.to_dict())
 
     def get_current_phase(self) -> PhaseState:
         """Get the current phase state."""
-        phase_name = self.PHASE_NAMES[self.state.current_phase - 1]
-        return self.state.phases[phase_name]
+        with self._lock:
+            if self._state is None:
+                self.load()
+            phase_name = self.PHASE_NAMES[self._state.current_phase - 1]
+            return self._state.phases[phase_name]
 
     def get_phase(self, phase_num: int) -> PhaseState:
         """Get phase state by number (1-indexed)."""
         if not 1 <= phase_num <= 5:
             raise ValueError(f"Invalid phase number: {phase_num}")
-        phase_name = self.PHASE_NAMES[phase_num - 1]
-        return self.state.phases[phase_name]
+        with self._lock:
+            if self._state is None:
+                self.load()
+            phase_name = self.PHASE_NAMES[phase_num - 1]
+            return self._state.phases[phase_name]
 
     def get_phase_dir(self, phase_num: int) -> Path:
         """Get directory for a phase."""

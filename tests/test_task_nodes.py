@@ -429,12 +429,17 @@ class TestTaskRouters:
         assert result == "build_verification"
 
     def test_verify_task_router_loop_back(self):
-        """Test verify router loops back to select."""
+        """Test verify router loops back to select when tasks are available."""
         from orchestrator.langgraph.routers.task import verify_task_router
 
         state = {
             "next_decision": "continue",
             "current_task_id": None,
+            # Must include tasks for router to loop back (otherwise escalates)
+            "tasks": [
+                {"id": "T1", "status": "pending", "dependencies": []},
+            ],
+            "completed_task_ids": [],
         }
         result = verify_task_router(state)
         assert result == "select_task"

@@ -92,12 +92,16 @@ class Orchestrator:
         self.git = GitOperationsManager(self.project_dir)
 
         # Initialize worktree manager and clean up any orphaned worktrees from previous runs
-        from .utils.worktree import WorktreeManager
-        self.worktree_manager = WorktreeManager(self.project_dir)
+        # This is optional - worktrees require git, so we gracefully handle non-git directories
+        from .utils.worktree import WorktreeManager, WorktreeError
+        self.worktree_manager: Optional[WorktreeManager] = None
         try:
+            self.worktree_manager = WorktreeManager(self.project_dir)
             self.worktree_manager.cleanup_orphaned_worktrees()
+        except WorktreeError as e:
+            self.logger.debug(f"Worktree manager disabled: {e} (git repository required)")
         except Exception as e:
-            self.logger.warning(f"Failed to cleanup orphaned worktrees: {e}")
+            self.logger.warning(f"Failed to initialize worktree manager: {e}")
 
     def check_prerequisites(self) -> tuple[bool, list[str]]:
         """Check that all prerequisites are met.

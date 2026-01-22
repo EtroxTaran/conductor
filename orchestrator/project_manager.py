@@ -402,12 +402,28 @@ class ProjectManager:
     def _load_project_state(self, project_dir: Path) -> Optional[dict]:
         """Load project workflow state.
 
+        Uses StateProjector to get state from checkpoint if available,
+        falling back to state.json for backwards compatibility.
+
         Args:
             project_dir: Path to project directory
 
         Returns:
             State dict or None
         """
+        try:
+            from .utils.state_projector import StateProjector
+            projector = StateProjector(project_dir)
+            state = projector.get_state()
+            if state is not None:
+                return state
+        except ImportError:
+            pass  # StateProjector not available, fall back to direct read
+        except Exception as e:
+            # Log but don't fail - fall back to direct read
+            logger.debug(f"StateProjector failed for {project_dir}: {e}")
+
+        # Fallback: direct read from state.json
         state_path = project_dir / ".workflow" / "state.json"
         if not state_path.exists():
             return None

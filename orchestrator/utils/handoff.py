@@ -189,7 +189,23 @@ class HandoffGenerator:
         self.handoff_md_file = self.workflow_dir / "handoff_brief.md"
 
     def _load_state(self) -> Optional[dict]:
-        """Load workflow state."""
+        """Load workflow state.
+
+        Uses StateProjector to get state from checkpoint if available,
+        falling back to state.json for backwards compatibility.
+        """
+        try:
+            from .state_projector import StateProjector
+            projector = StateProjector(self.project_dir)
+            state = projector.get_state()
+            if state is not None:
+                return state
+        except ImportError:
+            pass  # StateProjector not available
+        except Exception:
+            pass  # Log silently, fall back to direct read
+
+        # Fallback: direct read from state.json
         state_file = self.workflow_dir / "state.json"
         if not state_file.exists():
             return None

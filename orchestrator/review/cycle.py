@@ -471,27 +471,29 @@ class ReviewCycle:
             return ReviewDecision.NEEDS_CHANGES, None
 
         # Conflict - some approved, some didn't
-        # Use conflict resolver
-        resolution = self.conflict_resolver.resolve(
-            [
-                {
-                    "agent_id": r.reviewer_id,
-                    "approved": r.approved,
-                    "score": r.score,
-                    "blocking_issues": r.blocking_issues,
-                    "security_findings": r.security_findings,
-                }
-                for r in reviews
-            ]
-        )
+        # Use conflict resolver - needs cursor and gemini reviews separately
+        review_dicts = {
+            r.reviewer_id: {
+                "agent_id": r.reviewer_id,
+                "approved": r.approved,
+                "score": r.score,
+                "blocking_issues": r.blocking_issues,
+                "security_findings": r.security_findings,
+            }
+            for r in reviews
+        }
+        # Map A07 to cursor (security), A08 to gemini (architecture)
+        cursor_review = review_dicts.get("A07") or review_dicts.get("cursor") or list(review_dicts.values())[0]
+        gemini_review = review_dicts.get("A08") or review_dicts.get("gemini") or list(review_dicts.values())[-1]
+        resolution = self.conflict_resolver.resolve(cursor_review, gemini_review)
 
-        if resolution.resolved:
-            if resolution.final_decision == "approved":
-                return ReviewDecision.APPROVED, resolution
-            else:
-                return ReviewDecision.NEEDS_CHANGES, resolution
-        else:
+        # Check resolution action: "approve", "reject", or "escalate"
+        if resolution.action == "approve":
+            return ReviewDecision.APPROVED, resolution
+        elif resolution.action == "escalate":
             return ReviewDecision.CONFLICT, resolution
+        else:
+            return ReviewDecision.NEEDS_CHANGES, resolution
 
     def _log_iteration(self, iteration: ReviewIteration) -> None:
         """Log an iteration for debugging and audit."""

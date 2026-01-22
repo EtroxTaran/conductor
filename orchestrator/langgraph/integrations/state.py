@@ -28,9 +28,20 @@ logger = logging.getLogger(__name__)
 class LangGraphStateAdapter:
     """Adapter for syncing LangGraph state with StateManager.
 
-    Enables LangGraph workflows to persist state to the same
-    file format used by the legacy orchestrator, ensuring
-    compatibility during migration.
+    DEPRECATION NOTICE: This adapter's dual-write functionality is deprecated.
+    State should now be managed exclusively through LangGraph checkpoints,
+    with state.json generated on-demand via StateProjector.
+
+    Use cases:
+    - load_as_langgraph_state(): Still useful for one-time migration from
+      legacy state.json to LangGraph checkpoints.
+    - save_langgraph_state(): DEPRECATED - state.json is now projected
+      from checkpoints on-demand. Do not call directly.
+
+    Migration path:
+    1. Use StateProjector.project_state() to generate state.json from checkpoints
+    2. Read state via StateProjector.get_state() (auto-projects from checkpoint)
+    3. All state modifications flow through LangGraph workflow nodes
     """
 
     # Map between phase numbers and names
@@ -116,9 +127,22 @@ class LangGraphStateAdapter:
     def save_langgraph_state(self, lg_state: WorkflowState) -> None:
         """Save LangGraph state to legacy format.
 
+        DEPRECATED: State should now be persisted through LangGraph checkpoints
+        and projected to state.json on-demand via StateProjector.
+
+        This method is retained for backwards compatibility during migration
+        but should not be called in new code.
+
         Args:
             lg_state: LangGraph WorkflowState
         """
+        import warnings
+        warnings.warn(
+            "save_langgraph_state() is deprecated. State should be persisted "
+            "through LangGraph checkpoints and projected via StateProjector.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Load existing legacy state or create new
         if self.state_manager.state_file.exists():
             legacy_state = self.state_manager.load()
@@ -155,10 +179,20 @@ class LangGraphStateAdapter:
     ) -> None:
         """Sync a specific phase to legacy state.
 
+        DEPRECATED: Phase state should be persisted through LangGraph checkpoints
+        and projected to state.json on-demand via StateProjector.
+
         Args:
             phase_num: Phase number to sync
             lg_state: LangGraph state containing phase updates
         """
+        import warnings
+        warnings.warn(
+            "sync_phase() is deprecated. State should be persisted "
+            "through LangGraph checkpoints and projected via StateProjector.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         phase_status = lg_state.get("phase_status", {})
         lg_phase = phase_status.get(str(phase_num))
 

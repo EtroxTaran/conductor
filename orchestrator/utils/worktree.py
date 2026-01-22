@@ -29,17 +29,57 @@ import logging
 import subprocess
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
+class ConflictResolutionStrategy(str, Enum):
+    """Strategy for handling merge conflicts during worktree merging.
+
+    Attributes:
+        ABORT: Fail immediately on conflict (default, safest)
+        OURS: Accept worktree changes, discard main branch changes
+        THEIRS: Accept main branch changes, discard worktree changes
+        QUEUE: Queue for sequential merge (caller handles manually)
+    """
+
+    ABORT = "abort"
+    OURS = "ours"
+    THEIRS = "theirs"
+    QUEUE = "queue"
+
+
 class WorktreeError(Exception):
     """Raised when a worktree operation fails."""
 
     pass
+
+
+@dataclass
+class MergeConflictError(WorktreeError):
+    """Raised when a merge conflict occurs during worktree merging.
+
+    Attributes:
+        message: Error description
+        conflicting_files: List of files with conflicts
+        worktree_path: Path to the worktree that caused the conflict
+        commit_hash: The commit hash that couldn't be merged
+    """
+
+    message: str
+    conflicting_files: list[str] = field(default_factory=list)
+    worktree_path: Optional[Path] = None
+    commit_hash: Optional[str] = None
+
+    def __str__(self) -> str:
+        files_str = ", ".join(self.conflicting_files[:5])
+        if len(self.conflicting_files) > 5:
+            files_str += f"... and {len(self.conflicting_files) - 5} more"
+        return f"{self.message}. Conflicting files: [{files_str}]"
 
 
 @dataclass
@@ -252,6 +292,7 @@ class WorktreeManager:
         worktree_path: Path,
         commit_message: str,
         allow_empty: bool = True,
+        conflict_strategy: ConflictResolutionStrategy = ConflictResolutionStrategy.ABORT,
     ) -> Optional[str]:
         """Merge changes from a worktree back to main project.
 
@@ -259,17 +300,20 @@ class WorktreeManager:
         1. Commits any uncommitted changes in the worktree
         2. Gets the commit hash
         3. Cherry-picks the commit into the main project
+        4. Handles conflicts according to conflict_strategy
 
         Args:
             worktree_path: Path to the worktree
             commit_message: Commit message for the changes
             allow_empty: If True, create empty commit if no changes
+            conflict_strategy: Strategy for handling merge conflicts
 
         Returns:
             The cherry-picked commit hash, or None if no changes
 
         Raises:
             WorktreeError: If merge fails
+            MergeConflictError: If conflict occurs and strategy is ABORT or QUEUE
         """
         worktree_path = Path(worktree_path).resolve()
 
@@ -339,6 +383,14 @@ class WorktreeManager:
                         f"Worktree {worktree_path.name} had no unique changes to merge"
                     )
                     return commit_hash  # Still return the commit hash
+                elif "conflict" in cherry_pick_result.stderr.lower() or "conflict" in cherry_pick_result.stdout.lower():
+                    # Handle conflict based on strategy
+                    return self._handle_conflict(
+                        worktree_path=worktree_path,
+                        commit_hash=commit_hash,
+                        conflict_strategy=conflict_strategy,
+                        stderr=cherry_pick_result.stderr,
+                    )
                 else:
                     raise WorktreeError(
                         f"Failed to cherry-pick: {cherry_pick_result.stderr}"
@@ -354,6 +406,183 @@ class WorktreeManager:
             raise WorktreeError(
                 f"Failed to merge worktree: {e.stderr}"
             ) from e
+
+    def _get_conflicting_files(self) -> list[str]:
+        """Get list of files with merge conflicts.
+
+        Returns:
+            List of conflicting file paths
+        """
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=U"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            return [f for f in files if f]
+        except subprocess.CalledProcessError:
+            return []
+
+    def _handle_conflict(
+        self,
+        worktree_path: Path,
+        commit_hash: str,
+        conflict_strategy: ConflictResolutionStrategy,
+        stderr: str,
+    ) -> Optional[str]:
+        """Handle a merge conflict based on strategy.
+
+        Args:
+            worktree_path: Path to the worktree
+            commit_hash: The commit that caused the conflict
+            conflict_strategy: Strategy to apply
+            stderr: Error output from cherry-pick
+
+        Returns:
+            Commit hash if resolved, None otherwise
+
+        Raises:
+            MergeConflictError: If strategy is ABORT or QUEUE
+        """
+        conflicting_files = self._get_conflicting_files()
+
+        if conflict_strategy == ConflictResolutionStrategy.ABORT:
+            # Abort cherry-pick and raise error
+            subprocess.run(
+                ["git", "cherry-pick", "--abort"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+            )
+            raise MergeConflictError(
+                message=f"Merge conflict occurred for worktree {worktree_path.name}",
+                conflicting_files=conflicting_files,
+                worktree_path=worktree_path,
+                commit_hash=commit_hash,
+            )
+
+        elif conflict_strategy == ConflictResolutionStrategy.OURS:
+            # Accept worktree changes (ours = the cherry-picked changes)
+            logger.info(f"Resolving conflict with OURS strategy (worktree wins)")
+            for file_path in conflicting_files:
+                subprocess.run(
+                    ["git", "checkout", "--ours", file_path],
+                    cwd=str(self.project_dir),
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "add", file_path],
+                    cwd=str(self.project_dir),
+                    capture_output=True,
+                )
+
+            # Continue cherry-pick
+            subprocess.run(
+                ["git", "cherry-pick", "--continue"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+                env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+            )
+            logger.info(f"Resolved conflict with OURS strategy for {worktree_path.name}")
+            return commit_hash
+
+        elif conflict_strategy == ConflictResolutionStrategy.THEIRS:
+            # Accept main branch changes (theirs = current branch)
+            logger.info(f"Resolving conflict with THEIRS strategy (main wins)")
+            for file_path in conflicting_files:
+                subprocess.run(
+                    ["git", "checkout", "--theirs", file_path],
+                    cwd=str(self.project_dir),
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "add", file_path],
+                    cwd=str(self.project_dir),
+                    capture_output=True,
+                )
+
+            # Continue cherry-pick
+            subprocess.run(
+                ["git", "cherry-pick", "--continue"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+                env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+            )
+            logger.info(f"Resolved conflict with THEIRS strategy for {worktree_path.name}")
+            return commit_hash
+
+        elif conflict_strategy == ConflictResolutionStrategy.QUEUE:
+            # Queue for manual resolution - abort and raise
+            subprocess.run(
+                ["git", "cherry-pick", "--abort"],
+                cwd=str(self.project_dir),
+                capture_output=True,
+            )
+            raise MergeConflictError(
+                message=f"Merge conflict queued for manual resolution: {worktree_path.name}",
+                conflicting_files=conflicting_files,
+                worktree_path=worktree_path,
+                commit_hash=commit_hash,
+            )
+
+        return None
+
+    def merge_worktrees_sequential(
+        self,
+        worktrees: list[tuple[Path, str]],
+        conflict_strategy: ConflictResolutionStrategy = ConflictResolutionStrategy.ABORT,
+    ) -> list[dict]:
+        """Merge multiple worktrees sequentially.
+
+        This method merges worktrees one-by-one, allowing for better conflict
+        resolution as each merge is applied before the next.
+
+        Args:
+            worktrees: List of (worktree_path, commit_message) tuples
+            conflict_strategy: Strategy for handling merge conflicts
+
+        Returns:
+            List of result dicts with keys: worktree_path, success, commit_hash, error
+        """
+        results = []
+
+        for worktree_path, commit_message in worktrees:
+            result = {
+                "worktree_path": str(worktree_path),
+                "success": False,
+                "commit_hash": None,
+                "error": None,
+            }
+
+            try:
+                commit_hash = self.merge_worktree(
+                    worktree_path=worktree_path,
+                    commit_message=commit_message,
+                    conflict_strategy=conflict_strategy,
+                )
+                result["success"] = True
+                result["commit_hash"] = commit_hash
+                logger.info(f"Sequential merge succeeded for {worktree_path}")
+
+            except MergeConflictError as e:
+                result["error"] = str(e)
+                result["conflicting_files"] = e.conflicting_files
+                logger.warning(f"Conflict during sequential merge: {e}")
+
+                # If ABORT strategy, stop the entire sequence
+                if conflict_strategy == ConflictResolutionStrategy.ABORT:
+                    results.append(result)
+                    break
+
+            except WorktreeError as e:
+                result["error"] = str(e)
+                logger.error(f"Error during sequential merge: {e}")
+
+            results.append(result)
+
+        return results
 
     def get_worktree_status(self, worktree_path: Path) -> dict:
         """Get the git status of a worktree.

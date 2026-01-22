@@ -46,6 +46,8 @@ class ClaudeAgent(BaseAgent):
         timeout: int = 600,
         allowed_tools: Optional[list[str]] = None,
         system_prompt_file: Optional[str] = None,
+        phase_timeouts: Optional[dict[int, int]] = None,
+        enable_audit: bool = True,
         # Enhanced features
         enable_session_continuity: bool = True,
         default_fallback_model: Optional[str] = "sonnet",
@@ -59,6 +61,8 @@ class ClaudeAgent(BaseAgent):
             timeout: Timeout in seconds (default 10 minutes for complex tasks)
             allowed_tools: List of allowed tool patterns
             system_prompt_file: Path to system prompt file relative to project
+            phase_timeouts: Optional per-phase timeout overrides
+            enable_audit: Whether to enable audit trail logging
 
             Enhanced features:
             enable_session_continuity: Enable session tracking for iterative tasks
@@ -66,7 +70,7 @@ class ClaudeAgent(BaseAgent):
             default_budget_usd: Default budget limit per invocation
             schema_dir: Directory containing JSON schemas
         """
-        super().__init__(project_dir, timeout)
+        super().__init__(project_dir, timeout, phase_timeouts, enable_audit)
         self.allowed_tools = allowed_tools or [
             "Bash(git*)",
             "Bash(npm*)",
@@ -306,6 +310,7 @@ class ClaudeAgent(BaseAgent):
         product_spec: str,
         output_file: Optional[Path] = None,
         task_id: Optional[str] = None,
+        strict_validation: bool = True,
     ) -> AgentResult:
         """Run Claude for planning phase with plan mode.
 
@@ -315,6 +320,7 @@ class ClaudeAgent(BaseAgent):
             product_spec: Content of PRODUCT.md
             output_file: File to write plan to
             task_id: Optional task ID for session tracking
+            strict_validation: If True, fail on schema validation errors
 
         Returns:
             AgentResult with the plan
@@ -357,13 +363,29 @@ Focus on:
 3. Defining clear dependencies between tasks
 4. Planning tests before implementation (TDD approach)"""
 
-        return self.run(
+        result = self.run(
             prompt,
             output_file=output_file,
             use_plan_mode=True,  # Always use plan mode for planning
             task_id=task_id,
             output_schema="plan-schema.json",
         )
+
+        # Perform schema validation for planning output
+        if result.success and result.parsed_output:
+            is_valid, errors = self.validate_output(
+                result.parsed_output,
+                "plan-schema.json",
+                strict=strict_validation,
+            )
+            result.schema_validated = is_valid
+            result.validation_errors = errors if errors else None
+
+            if strict_validation and not is_valid:
+                result.success = False
+                result.error = f"Schema validation failed: {'; '.join(errors)}"
+
+        return result
 
     def run_implementation(
         self,

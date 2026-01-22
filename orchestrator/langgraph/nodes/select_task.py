@@ -17,6 +17,7 @@ from ..state import (
     WorkflowState,
     Task,
     TaskStatus,
+    TaskIndex,
     get_available_tasks,
     all_tasks_completed,
 )
@@ -57,6 +58,9 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
     failed_ids = set(state.get("failed_task_ids", []))
     in_flight_ids = set(state.get("in_flight_task_ids", []))
 
+    # Use TaskIndex for O(1) lookups and cached availability checks
+    task_index = TaskIndex(state)
+
     # Check if all tasks are done
     if all_tasks_completed(state):
         logger.info("All tasks completed")
@@ -68,9 +72,10 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
             "updated_at": datetime.now().isoformat(),
         }
 
-    # Get tasks that are ready to execute
+    # Get tasks that are ready to execute using O(1) indexed lookup
+    # TaskIndex.get_available() is cached after first call
     available = [
-        task for task in get_available_tasks(state)
+        task for task in task_index.get_available()
         if task.get("id") not in in_flight_ids
     ]
 

@@ -343,8 +343,8 @@ class TestBackoffCalculation:
         config = RateLimitConfig(backoff_base=1.0, backoff_max=60.0)
         limiter = AsyncRateLimiter(config=config, name="backoff-test")
 
-        # Simulate throttles
-        limiter.stats.throttled_requests = 3
+        # Simulate consecutive throttles (used for backoff calculation)
+        limiter._consecutive_throttles = 3
 
         backoff = limiter._calculate_backoff()
 
@@ -356,8 +356,8 @@ class TestBackoffCalculation:
         config = RateLimitConfig(backoff_base=1.0, backoff_max=10.0)
         limiter = AsyncRateLimiter(config=config, name="backoff-test")
 
-        # Many throttles
-        limiter.stats.throttled_requests = 100
+        # Many consecutive throttles
+        limiter._consecutive_throttles = 100
 
         backoff = limiter._calculate_backoff()
 
@@ -368,8 +368,8 @@ class TestBackoffCalculation:
         config = RateLimitConfig(backoff_base=1.0, backoff_max=1000.0)
         limiter = AsyncRateLimiter(config=config, name="backoff-test")
 
-        # Many throttles
-        limiter.stats.throttled_requests = 100
+        # Many consecutive throttles
+        limiter._consecutive_throttles = 100
 
         backoff = limiter._calculate_backoff()
 

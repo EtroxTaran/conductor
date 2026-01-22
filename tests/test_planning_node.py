@@ -17,6 +17,7 @@ import pytest
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import dataclass
 
 from orchestrator.langgraph.nodes.planning import planning_node
 from orchestrator.langgraph.state import (
@@ -27,12 +28,13 @@ from orchestrator.langgraph.state import (
 )
 
 
-def _create_mock_process(returncode: int, stdout: bytes, stderr: bytes = b""):
-    """Create a mock process for asyncio.create_subprocess_exec."""
-    mock_process = MagicMock()
-    mock_process.returncode = returncode
-    mock_process.communicate = AsyncMock(return_value=(stdout, stderr))
-    return mock_process
+@dataclass
+class MockAgentResult:
+    """Mock result from agent run."""
+    success: bool
+    output: str = ""
+    error: str = ""
+    exit_code: int = 0
 
 
 class TestPlanningNode:
@@ -134,10 +136,15 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_success(self, initial_state, mock_plan, temp_project_dir):
         """Test happy path with valid PRODUCT.md - should generate a plan."""
-        mock_process = _create_mock_process(0, json.dumps(mock_plan).encode())
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output=json.dumps(mock_plan),
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(json.dumps(mock_plan).encode(), b"")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         assert result["next_decision"] == "continue"
@@ -172,10 +179,15 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_claude_failure_retry(self, initial_state):
         """Test that Claude CLI failures trigger retry (up to max attempts)."""
-        mock_process = _create_mock_process(1, b"", b"Rate limit exceeded")
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=False,
+            error="Rate limit exceeded",
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(b"", b"Rate limit exceeded")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         # Should indicate retry is needed
@@ -189,10 +201,15 @@ We need comprehensive test coverage to ensure reliable operation.
         """Test that regex extraction is tried on JSON parse failure."""
         # Return raw JSON in text that needs extraction
         raw_output = f"Here is the plan:\n```json\n{json.dumps(mock_plan)}\n```"
-        mock_process = _create_mock_process(0, raw_output.encode())
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output=raw_output,
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(raw_output.encode(), b"")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         # Should still succeed using regex extraction
@@ -206,10 +223,15 @@ We need comprehensive test coverage to ensure reliable operation.
         initial_state["phase_status"]["1"].attempts = 2  # Already tried twice
         initial_state["phase_status"]["1"].max_attempts = 3
 
-        mock_process = _create_mock_process(1, b"", b"Persistent failure")
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=False,
+            error="Persistent failure",
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(b"", b"Persistent failure")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         # Should escalate after max attempts
@@ -220,10 +242,15 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_updates_phase_status(self, initial_state, mock_plan):
         """Test that phase_1 status is correctly updated."""
-        mock_process = _create_mock_process(0, json.dumps(mock_plan).encode())
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output=json.dumps(mock_plan),
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(json.dumps(mock_plan).encode(), b"")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         phase_1 = result["phase_status"]["1"]
@@ -237,10 +264,15 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_saves_plan_file(self, initial_state, mock_plan, temp_project_dir):
         """Test that plan is written to .workflow/phases/planning/plan.json."""
-        mock_process = _create_mock_process(0, json.dumps(mock_plan).encode())
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output=json.dumps(mock_plan),
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(json.dumps(mock_plan).encode(), b"")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             await planning_node(initial_state)
 
         plan_file = temp_project_dir / ".workflow" / "phases" / "planning" / "plan.json"
@@ -252,11 +284,16 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_action_logging(self, initial_state, mock_plan, temp_project_dir):
         """Test that action logging captures phase start and completion."""
-        mock_process = _create_mock_process(0, json.dumps(mock_plan).encode())
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output=json.dumps(mock_plan),
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
         mock_logger = MagicMock()
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(json.dumps(mock_plan).encode(), b"")), \
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner), \
              patch("orchestrator.langgraph.nodes.planning.get_node_logger", return_value=mock_logger):
             await planning_node(initial_state)
 
@@ -269,7 +306,10 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_exception_handling(self, initial_state):
         """Test that exceptions are properly caught and handled."""
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=RuntimeError("Unexpected error")):
+        mock_runner = MagicMock()
+        mock_runner.create_agent.side_effect = RuntimeError("Unexpected error")
+
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         assert result["next_decision"] == "retry"
@@ -279,10 +319,15 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_empty_plan_response(self, initial_state):
         """Test handling when Claude returns empty or invalid plan."""
-        mock_process = _create_mock_process(0, b"No plan generated")
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = MockAgentResult(
+            success=True,
+            output="No plan generated",  # Invalid - not JSON
+        )
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, return_value=(b"No plan generated", b"")):
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         # Should fail gracefully and request retry
@@ -292,8 +337,12 @@ We need comprehensive test coverage to ensure reliable operation.
     @pytest.mark.asyncio
     async def test_planning_node_timeout_handling(self, initial_state):
         """Test that timeout returns retry."""
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock), \
-             patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError()):
+        mock_agent = MagicMock()
+        mock_agent.run.side_effect = asyncio.TimeoutError()
+        mock_runner = MagicMock()
+        mock_runner.create_agent.return_value = mock_agent
+
+        with patch("orchestrator.langgraph.nodes.planning.SpecialistRunner", return_value=mock_runner):
             result = await planning_node(initial_state)
 
         assert result["next_decision"] == "retry"
