@@ -6,11 +6,20 @@ from typing import Optional
 from .base import BaseAgent
 
 
+# Available Cursor models
+CURSOR_MODELS = ["codex-5.2", "composer"]
+DEFAULT_CURSOR_MODEL = "codex-5.2"
+
+
 class CursorAgent(BaseAgent):
     """Wrapper for Cursor CLI (cursor-agent).
 
     Cursor is used for validation (code review) and verification phases.
     It auto-reads .cursor/rules and AGENTS.md for context.
+
+    Supports model selection:
+    - codex-5.2: High capability model (default)
+    - composer: Cheaper, faster model for simpler tasks
     """
 
     name = "cursor"
@@ -19,14 +28,17 @@ class CursorAgent(BaseAgent):
         self,
         project_dir: str | Path,
         timeout: int = 300,
+        model: Optional[str] = None,
     ):
         """Initialize Cursor agent.
 
         Args:
             project_dir: Root directory of the project
             timeout: Timeout in seconds
+            model: Optional model override (codex-5.2, composer)
         """
         super().__init__(project_dir, timeout)
+        self.model = model if model in CURSOR_MODELS else None
 
     def get_cli_command(self) -> str:
         """Get the CLI command."""
@@ -46,6 +58,7 @@ class CursorAgent(BaseAgent):
         prompt: str,
         output_format: str = "json",
         force: bool = True,
+        model: Optional[str] = None,
         **kwargs,
     ) -> list[str]:
         """Build the Cursor CLI command.
@@ -54,6 +67,7 @@ class CursorAgent(BaseAgent):
             prompt: The prompt to send
             output_format: Output format
             force: Force non-interactive mode
+            model: Model override (codex-5.2, composer)
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -64,6 +78,7 @@ class CursorAgent(BaseAgent):
             - --print or -p: Non-interactive mode (print output, don't open UI)
             - --output-format json: Output as JSON
             - --force: Force execution without confirmation
+            - --model: Model selection (codex-5.2, composer)
             - Prompt is a positional argument at the end
         """
         command = [
@@ -72,6 +87,11 @@ class CursorAgent(BaseAgent):
             "--output-format",
             output_format,
         ]
+
+        # Model selection
+        selected_model = model or self.model
+        if selected_model and selected_model in CURSOR_MODELS:
+            command.extend(["--model", selected_model])
 
         if force:
             command.append("--force")

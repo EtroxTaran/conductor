@@ -41,6 +41,11 @@ class AgentConfig:
     is_reviewer: bool = False  # Whether this agent can review others
     review_specialization: Optional[str] = None  # "security" | "code_quality" | "architecture"
     weight_in_conflicts: float = 0.5  # Weight when resolving review conflicts
+    # Loop execution metadata (for unified loop pattern)
+    supports_loop: bool = True  # Whether agent can be used in iterative loops
+    completion_patterns: List[str] = field(default_factory=list)  # Patterns that signal completion
+    available_models: List[str] = field(default_factory=list)  # Available model options
+    default_model: Optional[str] = None  # Default model to use
 
 
 # Complete Agent Registry
@@ -152,6 +157,11 @@ AGENT_REGISTRY: Dict[str, AgentConfig] = {
         output_schema="schemas/implementer_output.json",
         max_iterations=3,
         timeout_seconds=600,
+        # Loop execution metadata
+        supports_loop=True,
+        completion_patterns=["<promise>DONE</promise>", '"status": "completed"'],
+        available_models=["sonnet", "opus", "haiku"],
+        default_model="sonnet",
     ),
     "A05": AgentConfig(
         id="A05",
@@ -170,6 +180,11 @@ AGENT_REGISTRY: Dict[str, AgentConfig] = {
         output_schema="schemas/bug_fixer_output.json",
         max_iterations=5,  # More iterations for complex bugs
         timeout_seconds=720,
+        # Loop execution metadata
+        supports_loop=True,
+        completion_patterns=['"status": "done"', '"status": "completed"'],
+        available_models=["codex-5.2", "composer"],
+        default_model="codex-5.2",
     ),
     "A06": AgentConfig(
         id="A06",
@@ -188,6 +203,11 @@ AGENT_REGISTRY: Dict[str, AgentConfig] = {
         output_schema="schemas/refactorer_output.json",
         max_iterations=3,
         timeout_seconds=600,
+        # Loop execution metadata
+        supports_loop=True,
+        completion_patterns=["DONE", "COMPLETE", '"status": "done"'],
+        available_models=["gemini-2.0-flash", "gemini-2.0-pro"],
+        default_model="gemini-2.0-flash",
     ),
     # =========================================================================
     # REVIEW AGENTS

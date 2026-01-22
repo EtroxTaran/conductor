@@ -752,32 +752,44 @@ def estimate_cost(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
+    agent: str = "claude",
 ) -> float:
-    """Estimate cost for a Claude API call.
+    """Estimate cost for an API call.
 
-    Based on current pricing as of 2024.
+    Supports Claude, Cursor, and Gemini models with 2026 pricing.
 
     Args:
         model: Model name
         prompt_tokens: Number of input tokens
         completion_tokens: Number of output tokens
+        agent: Agent type (claude, cursor, gemini)
 
     Returns:
         Estimated cost in USD
     """
-    # Pricing per 1M tokens (approximate)
+    # Pricing per 1M tokens (approximate 2026 rates)
     pricing = {
+        # Claude models
         "claude-opus-4": {"input": 15.0, "output": 75.0},
+        "claude-opus-4-5": {"input": 15.0, "output": 75.0},
         "claude-sonnet-4": {"input": 3.0, "output": 15.0},
         "claude-haiku-3.5": {"input": 0.80, "output": 4.0},
-        # Fallbacks
+        # Claude fallbacks
         "opus": {"input": 15.0, "output": 75.0},
         "sonnet": {"input": 3.0, "output": 15.0},
         "haiku": {"input": 0.80, "output": 4.0},
+        # Cursor models
+        "codex-5.2": {"input": 5.0, "output": 15.0},
+        "composer": {"input": 3.0, "output": 10.0},
+        # Gemini models
+        "gemini-2.0-flash": {"input": 0.075, "output": 0.30},
+        "gemini-2.0-pro": {"input": 1.25, "output": 5.0},
+        "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+        "gemini-2.5-pro": {"input": 2.50, "output": 10.0},
     }
 
     # Normalize model name
-    model_lower = model.lower()
+    model_lower = model.lower() if model else ""
     model_prices = None
 
     for key, prices in pricing.items():
@@ -786,10 +798,57 @@ def estimate_cost(
             break
 
     if model_prices is None:
-        # Default to sonnet pricing
-        model_prices = pricing["sonnet"]
+        # Default based on agent type
+        agent_defaults = {
+            "claude": pricing["sonnet"],
+            "cursor": pricing["codex-5.2"],
+            "gemini": pricing["gemini-2.0-flash"],
+        }
+        model_prices = agent_defaults.get(agent.lower(), pricing["sonnet"])
 
     input_cost = (prompt_tokens / 1_000_000) * model_prices["input"]
     output_cost = (completion_tokens / 1_000_000) * model_prices["output"]
 
     return input_cost + output_cost
+
+
+# Agent pricing lookup table for quick access
+AGENT_PRICING = {
+    "claude": {
+        "sonnet": {"input": 3.0, "output": 15.0},
+        "opus": {"input": 15.0, "output": 75.0},
+        "haiku": {"input": 0.80, "output": 4.0},
+    },
+    "cursor": {
+        "codex-5.2": {"input": 5.0, "output": 15.0},
+        "composer": {"input": 3.0, "output": 10.0},
+    },
+    "gemini": {
+        "gemini-2.0-flash": {"input": 0.075, "output": 0.30},
+        "gemini-2.0-pro": {"input": 1.25, "output": 5.0},
+    },
+}
+
+
+def get_model_pricing(agent: str, model: str) -> dict[str, float]:
+    """Get pricing for a specific agent and model.
+
+    Args:
+        agent: Agent type (claude, cursor, gemini)
+        model: Model name
+
+    Returns:
+        Dict with 'input' and 'output' costs per 1M tokens
+    """
+    agent_prices = AGENT_PRICING.get(agent.lower(), {})
+    model_prices = agent_prices.get(model.lower())
+
+    if model_prices:
+        return model_prices
+
+    # Fall back to first model in agent's pricing
+    if agent_prices:
+        return next(iter(agent_prices.values()))
+
+    # Ultimate fallback to Claude sonnet
+    return AGENT_PRICING["claude"]["sonnet"]

@@ -35,6 +35,28 @@ from .ralph_loop import (
     TokenUsageTracker,
     create_ralph_config,
 )
+from .unified_loop import (
+    UnifiedLoopRunner,
+    UnifiedLoopConfig,
+    UnifiedLoopResult,
+    LoopContext,
+    create_unified_runner,
+    create_runner_from_task,
+    should_use_unified_loop,
+)
+from .verification import (
+    VerificationType,
+    VerificationStrategy,
+    VerificationContext,
+    VerificationResult,
+    TestVerification,
+    LintVerification,
+    SecurityVerification,
+    CompositeVerification,
+    NoVerification,
+    create_verifier,
+    create_composite_verifier,
+)
 from .hooks import (
     HookManager,
     HookResult,
@@ -63,18 +85,37 @@ __all__ = [
     "MarkdownTrackerConfig",
     "create_markdown_tracker",
     "load_tracker_config",
-    # Ralph Wiggum loop integration
+    # Ralph Wiggum loop integration (Claude only - legacy)
     "RalphLoopConfig",
     "RalphLoopResult",
     "run_ralph_loop",
     "detect_test_framework",
     "COMPLETION_PROMISE",
-    # New: Execution modes and token tracking
     "ExecutionMode",
     "HookConfig",
     "TokenMetrics",
     "TokenUsageTracker",
     "create_ralph_config",
+    # Unified loop integration (all agents)
+    "UnifiedLoopRunner",
+    "UnifiedLoopConfig",
+    "UnifiedLoopResult",
+    "LoopContext",
+    "create_unified_runner",
+    "create_runner_from_task",
+    "should_use_unified_loop",
+    # Verification strategies
+    "VerificationType",
+    "VerificationStrategy",
+    "VerificationContext",
+    "VerificationResult",
+    "TestVerification",
+    "LintVerification",
+    "SecurityVerification",
+    "CompositeVerification",
+    "NoVerification",
+    "create_verifier",
+    "create_composite_verifier",
     # Hook integration
     "HookManager",
     "HookResult",

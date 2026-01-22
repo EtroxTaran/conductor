@@ -1,7 +1,8 @@
 """Specialist Agent Runner.
 
 Handles loading agent configurations (context, tools) and executing
-them using the appropriate CLI wrapper.
+them using the appropriate CLI wrapper. Supports both single-shot
+and iterative (loop) execution modes.
 """
 
 import json
@@ -13,6 +14,13 @@ from ..agents.base import BaseAgent
 from ..agents.claude_agent import ClaudeAgent
 from ..agents.cursor_agent import CursorAgent
 from ..agents.gemini_agent import GeminiAgent
+from ..agents.adapter import AgentType, create_adapter, get_agent_for_task
+from ..langgraph.integrations.unified_loop import (
+    UnifiedLoopRunner,
+    UnifiedLoopConfig,
+    UnifiedLoopResult,
+    LoopContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +133,10 @@ class SpecialistRunner:
             Agent output
         """
         logger.info(f"Running specialist {agent_id} for task {task_id}")
-        
+
         config = self.get_agent_config(agent_id)
         agent = self.create_agent(agent_id)
-        
+
         # Prepend context for non-Claude agents (Claude handles it via system prompt file)
         final_prompt = prompt
         if config["type"] != "claude" and config["context_file"]:
@@ -136,10 +144,94 @@ class SpecialistRunner:
             final_prompt = f"{context_content}\n\nTASK:\n{prompt}"
 
         # Run the agent
-        # We use the synchronous run method wrapped in asyncio if needed, 
+        # We use the synchronous run method wrapped in asyncio if needed,
         # or just rely on the agent's implementation.
         # Note: BaseAgent.run is synchronous currently.
-        
+
         result = agent.run(final_prompt, **kwargs)
-        
+
         return result
+
+    async def run_iterative(
+        self,
+        agent_id: str,
+        prompt: str,
+        task_id: str,
+        context: Optional[LoopContext] = None,
+        config: Optional[UnifiedLoopConfig] = None,
+        **kwargs
+    ) -> UnifiedLoopResult:
+        """Run a specialist agent in iterative loop mode.
+
+        Uses the unified loop runner to iterate until verification passes.
+        Works with any agent type (Claude, Cursor, Gemini).
+
+        Args:
+            agent_id: Specialist ID (e.g., "A04")
+            prompt: The specific task prompt
+            task_id: ID of task being executed
+            context: Optional loop context with task details
+            config: Optional loop configuration override
+            **kwargs: Additional config options
+
+        Returns:
+            UnifiedLoopResult with execution details
+        """
+        logger.info(f"Running specialist {agent_id} in iterative mode for task {task_id}")
+
+        # Get agent configuration
+        agent_config = self.get_agent_config(agent_id)
+        agent_type = agent_config["type"]
+
+        # Build loop configuration
+        if config is None:
+            config = UnifiedLoopConfig(
+                agent_type=agent_type,
+                max_iterations=10,
+                verification="tests",
+                enable_session=(agent_type == "claude"),
+                enable_error_context=True,
+                enable_budget=True,
+                **kwargs
+            )
+
+        # Build loop context
+        if context is None:
+            context = LoopContext(task_id=task_id)
+
+        # Create and run unified loop
+        runner = UnifiedLoopRunner(self.project_dir, config)
+        result = await runner.run(task_id, prompt=prompt, context=context)
+
+        return result
+
+    def get_agent_type(self, agent_id: str) -> str:
+        """Get the agent type for a specialist.
+
+        Args:
+            agent_id: Specialist ID (e.g., "A04")
+
+        Returns:
+            Agent type string (claude, cursor, gemini)
+        """
+        config = self.get_agent_config(agent_id)
+        return config["type"]
+
+    def get_available_models(self, agent_id: str) -> list[str]:
+        """Get available models for a specialist agent.
+
+        Args:
+            agent_id: Specialist ID
+
+        Returns:
+            List of available model names
+        """
+        agent_type = self.get_agent_type(agent_id)
+
+        models = {
+            "claude": ["sonnet", "opus", "haiku"],
+            "cursor": ["codex-5.2", "composer"],
+            "gemini": ["gemini-2.0-flash", "gemini-2.0-pro"],
+        }
+
+        return models.get(agent_type, [])

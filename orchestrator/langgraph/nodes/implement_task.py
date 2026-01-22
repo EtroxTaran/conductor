@@ -31,6 +31,12 @@ from ..integrations.ralph_loop import (
     run_ralph_loop,
     detect_test_framework,
 )
+from ..integrations.unified_loop import (
+    UnifiedLoopRunner,
+    UnifiedLoopConfig,
+    LoopContext,
+    should_use_unified_loop,
+)
 from ..integrations import (
     create_linear_adapter,
     load_issue_mapping,
@@ -51,6 +57,13 @@ MAX_CONCURRENT_OPERATIONS = 1  # Single writer
 
 # Environment variable to enable Ralph Wiggum mode
 USE_RALPH_LOOP = os.environ.get("USE_RALPH_LOOP", "auto")  # "auto", "true", "false"
+
+# Environment variable to enable Unified Loop (Ralph Wiggum for all agents)
+USE_UNIFIED_LOOP_ENV = os.environ.get("USE_UNIFIED_LOOP", "false").lower() == "true"
+
+# Environment variables for agent/model selection in unified loop
+LOOP_AGENT = os.environ.get("LOOP_AGENT", "claude")  # claude, cursor, gemini
+LOOP_MODEL = os.environ.get("LOOP_MODEL")  # codex-5.2, composer, gemini-2.0-flash, etc.
 
 # Scoped prompt for minimal context workers - focuses only on task-relevant files
 SCOPED_TASK_PROMPT = """## Task
@@ -223,9 +236,18 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
     _update_task_trackers(project_dir, task_id, TaskStatus.IN_PROGRESS)
 
     # Decide which execution mode to use
+    use_unified = _should_use_unified_loop(task, project_dir)
     use_ralph = _should_use_ralph_loop(task, project_dir)
 
-    if use_ralph:
+    if use_unified:
+        logger.info(f"Using unified loop for task {task_id} (agent: {LOOP_AGENT})")
+        return await _implement_with_unified_loop(
+            state=state,
+            task=task,
+            updated_task=updated_task,
+            project_dir=project_dir,
+        )
+    elif use_ralph:
         logger.info(f"Using Ralph Wiggum loop for task {task_id}")
         return await _implement_with_ralph_loop(
             state=state,
@@ -495,6 +517,82 @@ def _should_use_ralph_loop(task: Task, project_dir: Path) -> bool:
     return False
 
 
+def _should_use_unified_loop(task: Task, project_dir: Path) -> bool:
+    """Determine whether to use unified loop for this task.
+
+    Uses unified loop when:
+    - USE_UNIFIED_LOOP=true (environment variable)
+    - Or task specifies a non-Claude agent
+
+    The unified loop works with any agent (Claude, Cursor, Gemini).
+
+    Args:
+        task: Task to implement
+        project_dir: Project directory
+
+    Returns:
+        True if unified loop should be used
+    """
+    # Check environment variable
+    if USE_UNIFIED_LOOP_ENV:
+        return True
+
+    # Check if task specifies a non-Claude agent
+    agent_type = task.get("agent_type") or task.get("primary_cli")
+    if agent_type and agent_type.lower() in ("cursor", "gemini"):
+        return True
+
+    # Check LOOP_AGENT environment variable
+    if LOOP_AGENT.lower() in ("cursor", "gemini"):
+        return True
+
+    return False
+
+
+def _get_unified_loop_config(task: Task, project_dir: Path) -> UnifiedLoopConfig:
+    """Get unified loop configuration for a task.
+
+    Args:
+        task: Task to implement
+        project_dir: Project directory
+
+    Returns:
+        Configured UnifiedLoopConfig
+    """
+    # Determine agent type
+    agent_type = LOOP_AGENT
+    if task.get("agent_type"):
+        agent_type = task.get("agent_type")
+    elif task.get("primary_cli"):
+        agent_type = task.get("primary_cli")
+
+    # Determine model
+    model = LOOP_MODEL
+    if task.get("model"):
+        model = task.get("model")
+
+    # Determine verification type
+    verification = "tests"
+    if task.get("test_files"):
+        verification = "tests"
+    elif task.get("verification"):
+        verification = task.get("verification")
+
+    return UnifiedLoopConfig(
+        agent_type=agent_type,
+        model=model,
+        max_iterations=10,
+        iteration_timeout=300,
+        verification=verification,
+        enable_session=(agent_type.lower() == "claude"),
+        enable_error_context=True,
+        enable_budget=True,
+        budget_per_iteration=0.50,
+        max_budget=5.00,
+        save_iteration_logs=True,
+    )
+
+
 async def _implement_with_ralph_loop(
     state: WorkflowState,
     task: Task,
@@ -597,6 +695,115 @@ async def _implement_with_ralph_loop(
         )
     except Exception as e:
         logger.error(f"Ralph loop for task {task_id} failed: {e}")
+        return _handle_task_error(updated_task, str(e))
+
+
+async def _implement_with_unified_loop(
+    state: WorkflowState,
+    task: Task,
+    updated_task: dict,
+    project_dir: Path,
+) -> dict[str, Any]:
+    """Implement task using unified loop pattern (works with any agent).
+
+    This is the universal version of Ralph Wiggum that works with
+    Claude, Cursor, and Gemini agents. Uses the adapter layer to
+    abstract CLI differences.
+
+    Args:
+        state: Workflow state
+        task: Task definition
+        updated_task: Task with updated attempt count
+        project_dir: Project directory
+
+    Returns:
+        State updates
+    """
+    task_id = task["id"]
+
+    # Get unified loop configuration
+    config = _get_unified_loop_config(task, project_dir)
+
+    # Build loop context
+    context = LoopContext(
+        task_id=task_id,
+        title=task.get("title", ""),
+        user_story=task.get("user_story", ""),
+        acceptance_criteria=task.get("acceptance_criteria", []),
+        files_to_create=task.get("files_to_create", []),
+        files_to_modify=task.get("files_to_modify", []),
+        test_files=task.get("test_files", []),
+    )
+
+    try:
+        # Create and run unified loop
+        runner = UnifiedLoopRunner(project_dir, config)
+        result = await asyncio.wait_for(
+            runner.run(task_id, context=context),
+            timeout=RALPH_TIMEOUT,
+        )
+
+        if result.success:
+            # Task completed successfully
+            _save_task_result(project_dir, task_id, {
+                "status": "completed",
+                "implementation_mode": "unified_loop",
+                "agent_type": result.agent_type,
+                "model": result.model,
+                "iterations": result.iterations,
+                "total_time_seconds": result.total_time_seconds,
+                "total_cost_usd": result.total_cost_usd,
+                "completion_reason": result.completion_reason,
+                **(result.final_output or {}),
+            })
+
+            updated_task["implementation_notes"] = (
+                f"Completed via unified loop ({result.agent_type}) "
+                f"in {result.iterations} iteration(s). "
+                f"Reason: {result.completion_reason}. "
+                f"Cost: ${result.total_cost_usd:.4f}"
+            )
+
+            logger.info(
+                f"Task {task_id} completed via unified loop "
+                f"({result.agent_type}) in {result.iterations} iterations"
+            )
+
+            # Cleanup transient artifacts
+            try:
+                cleanup_manager = CleanupManager(project_dir)
+                cleanup_result = cleanup_manager.on_task_done(task_id)
+                logger.debug(
+                    f"Cleanup for task {task_id}: {cleanup_result.total_deleted} items, "
+                    f"{cleanup_result.bytes_freed} bytes freed"
+                )
+            except Exception as e:
+                logger.warning(f"Cleanup failed for task {task_id}: {e}")
+
+            return {
+                "tasks": [updated_task],
+                "next_decision": "continue",
+                "updated_at": datetime.now().isoformat(),
+            }
+        else:
+            # Unified loop failed
+            logger.warning(
+                f"Unified loop failed for task {task_id}: {result.error}"
+            )
+            return _handle_task_error(
+                updated_task,
+                f"Unified loop failed after {result.iterations} iterations "
+                f"({result.agent_type}): {result.error}",
+            )
+
+    except asyncio.TimeoutError:
+        logger.error(f"Unified loop for task {task_id} timed out")
+        return _handle_task_error(
+            updated_task,
+            f"Unified loop timed out after {RALPH_TIMEOUT // 60} minutes",
+        )
+    except Exception as e:
+        logger.error(f"Unified loop for task {task_id} failed: {e}")
         return _handle_task_error(updated_task, str(e))
 
 

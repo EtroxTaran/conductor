@@ -10,6 +10,7 @@ Enhanced features available across agents:
 - Audit trail for debugging and compliance
 - Error context preservation for intelligent retries
 - Budget control for cost management
+- Unified adapter layer for loop execution
 """
 
 from .base import BaseAgent, AgentResult
@@ -24,6 +25,21 @@ from .budget import (
     BudgetExceeded,
     BudgetEnforcementResult,
     SpendRecord,
+    AGENT_PRICING,
+    get_model_pricing,
+)
+from .adapter import (
+    AgentType,
+    AgentAdapter,
+    AgentCapabilities,
+    IterationResult,
+    ClaudeAdapter,
+    CursorAdapter,
+    GeminiAdapter,
+    create_adapter,
+    get_agent_capabilities,
+    get_available_agents,
+    get_agent_for_task,
 )
 
 __all__ = [
@@ -47,4 +63,18 @@ __all__ = [
     "BudgetExceeded",
     "BudgetEnforcementResult",
     "SpendRecord",
+    "AGENT_PRICING",
+    "get_model_pricing",
+    # Adapter layer
+    "AgentType",
+    "AgentAdapter",
+    "AgentCapabilities",
+    "IterationResult",
+    "ClaudeAdapter",
+    "CursorAdapter",
+    "GeminiAdapter",
+    "create_adapter",
+    "get_agent_capabilities",
+    "get_available_agents",
+    "get_agent_for_task",
 ]

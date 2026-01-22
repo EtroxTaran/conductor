@@ -6,11 +6,20 @@ from typing import Optional
 from .base import BaseAgent
 
 
+# Available Gemini models
+GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-pro"]
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+
+
 class GeminiAgent(BaseAgent):
     """Wrapper for Gemini CLI.
 
     Gemini is used for validation and architecture verification phases.
     It reads context from GEMINI.md.
+
+    Supports model selection:
+    - gemini-2.0-flash: Fast, cost-effective (default)
+    - gemini-2.0-pro: Higher capability for complex tasks
     """
 
     name = "gemini"
@@ -19,14 +28,17 @@ class GeminiAgent(BaseAgent):
         self,
         project_dir: str | Path,
         timeout: int = 300,
+        model: Optional[str] = None,
     ):
         """Initialize Gemini agent.
 
         Args:
             project_dir: Root directory of the project
             timeout: Timeout in seconds
+            model: Optional model override (gemini-2.0-flash, gemini-2.0-pro)
         """
         super().__init__(project_dir, timeout)
+        self.model = model if model in GEMINI_MODELS else None
 
     def get_cli_command(self) -> str:
         """Get the CLI command."""
@@ -39,12 +51,14 @@ class GeminiAgent(BaseAgent):
     def build_command(
         self,
         prompt: str,
+        model: Optional[str] = None,
         **kwargs,
     ) -> list[str]:
         """Build the Gemini CLI command.
 
         Args:
             prompt: The prompt to send
+            model: Model override (gemini-2.0-flash, gemini-2.0-pro)
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -53,15 +67,23 @@ class GeminiAgent(BaseAgent):
         Note:
             gemini CLI usage:
             - --yolo: Auto-approve tool calls (non-interactive)
+            - --model: Model selection
             - Prompt is a positional argument
             - Gemini CLI does NOT support --output-format flag
             - Output must be parsed/wrapped to JSON externally
         """
-        command = [
-            "gemini",
-            "--yolo",  # Auto-approve tool calls for non-interactive use
-            prompt,    # Prompt as positional argument
-        ]
+        command = ["gemini"]
+
+        # Model selection
+        selected_model = model or self.model
+        if selected_model and selected_model in GEMINI_MODELS:
+            command.extend(["--model", selected_model])
+
+        # Auto-approve tool calls for non-interactive use
+        command.append("--yolo")
+
+        # Prompt as positional argument
+        command.append(prompt)
 
         return command
 
