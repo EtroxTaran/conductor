@@ -96,17 +96,24 @@ class SessionStorageAdapter(SessionStorageProtocol):
         hash_value = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
         return f"{task_id}-{hash_value}"
 
-    def create_session(self, task_id: str, agent: str = "claude") -> SessionData:
+    def create_session(
+        self,
+        task_id: str,
+        agent: str = "claude",
+        session_id: Optional[str] = None,
+    ) -> SessionData:
         """Create a new session for a task.
 
         Args:
             task_id: Task identifier
             agent: Agent identifier (default: claude)
+            session_id: Optional session ID (auto-generated if not provided)
 
         Returns:
             SessionData for the new session
         """
-        session_id = self._generate_session_id(task_id)
+        if session_id is None:
+            session_id = self._generate_session_id(task_id)
 
         if self._use_db:
             try:
