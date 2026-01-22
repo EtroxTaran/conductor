@@ -8,6 +8,7 @@ from orchestrator.agents.budget import (
     BudgetManager,
     BudgetConfig,
     BudgetExceeded,
+    BudgetEnforcementResult,
     SpendRecord,
     estimate_cost,
 )
@@ -70,11 +71,12 @@ class TestBudgetConfig:
     """Tests for BudgetConfig dataclass."""
 
     def test_defaults(self):
-        """Test default configuration."""
+        """Test default configuration with reasonable limits."""
         config = BudgetConfig()
 
-        assert config.project_budget_usd is None  # Unlimited
-        assert config.task_budget_usd is None  # Unlimited
+        # Now defaults to reasonable limits to prevent runaway costs
+        assert config.project_budget_usd == 50.0  # $50 per workflow run
+        assert config.task_budget_usd == 5.0  # $5 per task
         assert config.invocation_budget_usd == 1.00
         assert config.warn_at_percent == 80.0
         assert config.enabled is True
@@ -187,7 +189,8 @@ class TestBudgetManager:
 
     def test_get_task_remaining_unlimited(self, budget_manager: BudgetManager):
         """Test remaining for unlimited task."""
-        # No budget set
+        # Explicitly set unlimited budget (override default)
+        budget_manager.set_default_task_budget(None)
         assert budget_manager.get_task_remaining("T1") is None
 
     def test_get_project_remaining(self, budget_manager: BudgetManager):
@@ -365,3 +368,183 @@ class TestBudgetExceeded:
         assert exc.limit_usd == 5.0
         assert exc.current_usd == 4.0
         assert exc.requested_usd == 2.0
+
+
+class TestBudgetEnforcementResult:
+    """Tests for BudgetEnforcementResult dataclass."""
+
+    def test_allowed_result(self):
+        """Test allowed result."""
+        result = BudgetEnforcementResult(
+            allowed=True,
+            current_usd=10.0,
+            requested_usd=1.0,
+            remaining_usd=40.0,
+            message="Budget check passed",
+        )
+
+        assert result.allowed is True
+        assert result.should_escalate is False
+        assert result.should_abort is False
+
+    def test_exceeded_result(self):
+        """Test exceeded result."""
+        result = BudgetEnforcementResult(
+            allowed=False,
+            exceeded_type="project",
+            limit_usd=50.0,
+            current_usd=49.0,
+            requested_usd=5.0,
+            remaining_usd=1.0,
+            should_escalate=True,
+            should_abort=False,
+            message="Budget exceeded",
+        )
+
+        assert result.allowed is False
+        assert result.exceeded_type == "project"
+        assert result.should_escalate is True
+        assert result.should_abort is False
+
+    def test_to_dict(self):
+        """Test serialization to dict."""
+        result = BudgetEnforcementResult(
+            allowed=True,
+            current_usd=10.0,
+            requested_usd=1.0,
+        )
+
+        d = result.to_dict()
+        assert d["allowed"] is True
+        assert d["current_usd"] == 10.0
+        assert d["requested_usd"] == 1.0
+
+
+class TestBudgetEnforcement:
+    """Tests for budget enforcement methods."""
+
+    def test_require_budget_passes(self, budget_manager: BudgetManager):
+        """Test require_budget when within limits."""
+        budget_manager.set_project_budget(50.0)
+        budget_manager.set_task_budget("T1", 10.0)
+
+        # Should not raise
+        budget_manager.require_budget("T1", 5.0)
+
+    def test_require_budget_raises_on_project_exceeded(self, budget_manager: BudgetManager):
+        """Test require_budget raises when project budget exceeded."""
+        budget_manager.set_project_budget(10.0)
+        budget_manager.record_spend("T1", "claude", 8.0)
+
+        with pytest.raises(BudgetExceeded) as exc_info:
+            budget_manager.require_budget("T1", 5.0)
+
+        assert exc_info.value.limit_type == "project"
+
+    def test_require_budget_raises_on_task_exceeded(self, budget_manager: BudgetManager):
+        """Test require_budget raises when task budget exceeded."""
+        budget_manager.set_task_budget("T1", 5.0)
+        budget_manager.record_spend("T1", "claude", 4.0)
+
+        with pytest.raises(BudgetExceeded) as exc_info:
+            budget_manager.require_budget("T1", 2.0)
+
+        assert "task:T1" in exc_info.value.limit_type
+
+    def test_enforce_budget_allowed(self, budget_manager: BudgetManager):
+        """Test enforce_budget returns allowed result."""
+        budget_manager.set_project_budget(50.0)
+
+        result = budget_manager.enforce_budget("T1", 5.0)
+
+        assert result.allowed is True
+        assert result.should_escalate is False
+        assert result.should_abort is False
+
+    def test_enforce_budget_project_exceeded(self, budget_manager: BudgetManager):
+        """Test enforce_budget when project budget exceeded."""
+        budget_manager.set_project_budget(10.0)
+        budget_manager.record_spend("T1", "claude", 8.0)
+
+        result = budget_manager.enforce_budget("T1", 5.0)
+
+        assert result.allowed is False
+        assert result.exceeded_type == "project"
+        assert result.should_escalate is True
+        assert result.limit_usd == 10.0
+        assert result.current_usd == 8.0
+
+    def test_enforce_budget_task_exceeded(self, budget_manager: BudgetManager):
+        """Test enforce_budget when task budget exceeded."""
+        budget_manager.set_project_budget(100.0)
+        budget_manager.set_task_budget("T1", 5.0)
+        budget_manager.record_spend("T1", "claude", 4.0)
+
+        result = budget_manager.enforce_budget("T1", 2.0)
+
+        assert result.allowed is False
+        assert result.exceeded_type == "task:T1"
+        assert result.should_escalate is True
+
+    def test_enforce_budget_soft_limit_warning(self, budget_manager: BudgetManager):
+        """Test enforce_budget triggers escalation at soft limit."""
+        budget_manager.set_project_budget(10.0)
+        budget_manager.record_spend("T1", "claude", 9.0)  # 90% used
+
+        result = budget_manager.enforce_budget("T1", 0.5, soft_limit_percent=90.0)
+
+        # Should be allowed but should escalate for warning
+        assert result.allowed is True
+        assert result.should_escalate is True
+        assert result.should_abort is False
+
+    def test_enforce_budget_hard_abort_when_exhausted(self, budget_manager: BudgetManager):
+        """Test enforce_budget triggers abort when budget exhausted."""
+        budget_manager.set_project_budget(10.0)
+        budget_manager.record_spend("T1", "claude", 10.0)  # Exactly at limit
+
+        result = budget_manager.enforce_budget("T1", 1.0)
+
+        assert result.allowed is False
+        assert result.should_escalate is True
+        assert result.should_abort is True  # Hard abort - nothing left
+
+    def test_is_budget_exceeded_false(self, budget_manager: BudgetManager):
+        """Test is_budget_exceeded when within limits."""
+        budget_manager.set_project_budget(50.0)
+
+        assert budget_manager.is_budget_exceeded() is False
+        assert budget_manager.is_budget_exceeded("T1") is False
+
+    def test_is_budget_exceeded_project(self, budget_manager: BudgetManager):
+        """Test is_budget_exceeded when project limit hit."""
+        budget_manager.set_project_budget(10.0)
+        budget_manager.record_spend("T1", "claude", 10.0)
+
+        assert budget_manager.is_budget_exceeded() is True
+
+    def test_is_budget_exceeded_task(self, budget_manager: BudgetManager):
+        """Test is_budget_exceeded when task limit hit."""
+        budget_manager.set_project_budget(100.0)
+        budget_manager.set_task_budget("T1", 5.0)
+        budget_manager.record_spend("T1", "claude", 5.0)
+
+        assert budget_manager.is_budget_exceeded() is False  # Project OK
+        assert budget_manager.is_budget_exceeded("T1") is True  # Task exceeded
+
+    def test_get_enforcement_status(self, budget_manager: BudgetManager):
+        """Test get_enforcement_status returns comprehensive info."""
+        budget_manager.set_project_budget(50.0)
+        budget_manager.set_task_budget("T1", 10.0)
+        budget_manager.record_spend("T1", "claude", 5.0)
+
+        status = budget_manager.get_enforcement_status()
+
+        assert status["budget_enabled"] is True
+        assert status["project_budget_usd"] == 50.0
+        assert status["project_spent_usd"] == 5.0
+        assert status["project_remaining_usd"] == 45.0
+        assert status["project_exceeded"] is False
+        assert status["project_percent_used"] == 10.0
+        assert status["task_budgets_set"] == 1
+        assert status["invocation_budget_usd"] == 1.0

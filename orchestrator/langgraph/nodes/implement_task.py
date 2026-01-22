@@ -40,6 +40,7 @@ from ..integrations.board_sync import sync_board
 from ...specialists.runner import SpecialistRunner
 from ...cleanup import CleanupManager
 from ...utils.worktree import WorktreeManager, WorktreeError
+from ...agents import BudgetManager, BudgetExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,82 @@ When complete, output a JSON object:
 }}
 """
 
+# Default estimated cost per task implementation (conservative estimate)
+ESTIMATED_TASK_COST_USD = 0.50
+
+
+def _check_budget_before_task(
+    project_dir: Path,
+    task_id: str,
+    estimated_cost: float = ESTIMATED_TASK_COST_USD,
+) -> Optional[dict[str, Any]]:
+    """Check budget before starting task implementation.
+
+    Returns None if budget is OK, or a state update dict if budget
+    is exceeded (either escalate or abort).
+
+    Args:
+        project_dir: Project directory
+        task_id: Task being implemented
+        estimated_cost: Estimated cost of implementation
+
+    Returns:
+        None if OK, or dict with errors/escalation if budget exceeded
+    """
+    try:
+        budget_manager = BudgetManager(project_dir)
+
+        # Quick check if budgets are disabled
+        if not budget_manager.config.enabled:
+            return None
+
+        # Enforce budget with structured result
+        result = budget_manager.enforce_budget(task_id, estimated_cost)
+
+        if result.should_abort:
+            # Hard stop - budget completely exhausted
+            logger.error(f"Budget exhausted, aborting: {result.message}")
+            return {
+                "errors": [{
+                    "type": "budget_exceeded_error",
+                    "message": f"Budget exhausted: {result.message}",
+                    "exceeded_type": result.exceeded_type,
+                    "limit_usd": result.limit_usd,
+                    "current_usd": result.current_usd,
+                    "timestamp": datetime.now().isoformat(),
+                }],
+                "next_decision": "escalate",
+                "budget_status": result.to_dict(),
+            }
+
+        if not result.allowed:
+            # Budget exceeded but not completely exhausted - escalate
+            logger.warning(f"Budget exceeded, escalating: {result.message}")
+            return {
+                "errors": [{
+                    "type": "budget_limit_reached",
+                    "message": f"Budget limit reached: {result.message}",
+                    "exceeded_type": result.exceeded_type,
+                    "limit_usd": result.limit_usd,
+                    "current_usd": result.current_usd,
+                    "remaining_usd": result.remaining_usd,
+                    "timestamp": datetime.now().isoformat(),
+                }],
+                "next_decision": "escalate",
+                "budget_status": result.to_dict(),
+            }
+
+        if result.should_escalate:
+            # Approaching limit - log warning but continue
+            logger.warning(f"Budget warning: {result.message}")
+
+        return None  # OK to proceed
+
+    except Exception as e:
+        # Don't block on budget check failures - log and continue
+        logger.warning(f"Budget check failed (continuing anyway): {e}")
+        return None
+
 
 async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
     """Implement the current task.
@@ -131,6 +208,11 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
     logger.info(f"Implementing task: {task_id} - {task.get('title', 'Unknown')}")
 
     project_dir = Path(state["project_dir"])
+
+    # Check budget before implementation
+    budget_result = _check_budget_before_task(project_dir, task_id)
+    if budget_result is not None:
+        return budget_result
 
     # Update task attempt count
     updated_task = dict(task)
@@ -182,6 +264,17 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
         }
 
     project_dir = Path(state["project_dir"])
+
+    # Check budget before parallel implementation
+    # Estimate cost as number of tasks * per-task cost
+    total_estimated_cost = len(task_ids) * ESTIMATED_TASK_COST_USD
+    budget_result = _check_budget_before_task(
+        project_dir,
+        task_ids[0],  # Use first task ID for tracking
+        estimated_cost=total_estimated_cost,
+    )
+    if budget_result is not None:
+        return budget_result
 
     # Use TaskIndex for O(1) lookups when fetching multiple tasks
     task_index = TaskIndex(state)

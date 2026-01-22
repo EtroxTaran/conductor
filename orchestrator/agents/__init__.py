@@ -18,7 +18,13 @@ from .cursor_agent import CursorAgent
 from .gemini_agent import GeminiAgent
 from .session_manager import SessionManager, SessionInfo
 from .error_context import ErrorContextManager, ErrorContext, ErrorType
-from .budget import BudgetManager, BudgetConfig, BudgetExceeded, SpendRecord
+from .budget import (
+    BudgetManager,
+    BudgetConfig,
+    BudgetExceeded,
+    BudgetEnforcementResult,
+    SpendRecord,
+)
 
 __all__ = [
     # Base classes
@@ -39,5 +45,6 @@ __all__ = [
     "BudgetManager",
     "BudgetConfig",
     "BudgetExceeded",
+    "BudgetEnforcementResult",
     "SpendRecord",
 ]

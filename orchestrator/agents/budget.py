@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 # Default storage location
 DEFAULT_BUDGET_FILE = ".workflow/budget.json"
 
-# Default limits (None = unlimited)
-DEFAULT_TASK_BUDGET_USD = None
-DEFAULT_PROJECT_BUDGET_USD = None
+# Default limits - set reasonable values to prevent runaway costs
+DEFAULT_TASK_BUDGET_USD = 5.00  # $5 per task
+DEFAULT_PROJECT_BUDGET_USD = 50.00  # $50 per workflow run
 DEFAULT_INVOCATION_BUDGET_USD = 1.00  # Safety limit per invocation
 
 
@@ -169,6 +169,40 @@ class BudgetExceeded(Exception):
             f"limit=${limit_usd:.2f}, current=${current_usd:.2f}, "
             f"requested=${requested_usd:.2f}"
         )
+
+
+@dataclass
+class BudgetEnforcementResult:
+    """Result of budget enforcement check.
+
+    Used for workflow integration to decide whether to proceed,
+    escalate, or abort based on budget status.
+
+    Attributes:
+        allowed: Whether the operation is allowed
+        exceeded_type: Type of budget that was exceeded (None if allowed)
+        limit_usd: The budget limit
+        current_usd: Current spending
+        requested_usd: Amount requested
+        remaining_usd: Remaining budget (None if unlimited)
+        should_escalate: Whether to escalate to human (soft limit)
+        should_abort: Whether to abort workflow (hard limit)
+        message: Human-readable message
+    """
+
+    allowed: bool
+    exceeded_type: Optional[str] = None
+    limit_usd: Optional[float] = None
+    current_usd: float = 0.0
+    requested_usd: float = 0.0
+    remaining_usd: Optional[float] = None
+    should_escalate: bool = False
+    should_abort: bool = False
+    message: str = ""
+
+    def to_dict(self) -> dict:
+        """Serialize for workflow state."""
+        return asdict(self)
 
 
 class BudgetManager:
@@ -391,6 +425,169 @@ class BudgetManager:
                 return False
 
         return True
+
+    def require_budget(self, task_id: str, amount_usd: float) -> None:
+        """Require budget to be available, raising if exceeded.
+
+        Use this for hard enforcement - will always raise BudgetExceeded
+        if the budget would be exceeded.
+
+        Args:
+            task_id: Task identifier
+            amount_usd: Amount to spend
+
+        Raises:
+            BudgetExceeded: If budget would be exceeded
+        """
+        self.can_spend(task_id, amount_usd, raise_on_exceeded=True)
+
+    def enforce_budget(
+        self,
+        task_id: str,
+        amount_usd: float,
+        soft_limit_percent: float = 90.0,
+    ) -> BudgetEnforcementResult:
+        """Check budget with detailed result for workflow decisions.
+
+        This method provides a structured result that can be used by
+        the workflow to decide how to proceed:
+        - allowed=True: Proceed normally
+        - should_escalate=True: Escalate to human for approval
+        - should_abort=True: Hard stop, workflow should not continue
+
+        Args:
+            task_id: Task identifier
+            amount_usd: Amount to spend
+            soft_limit_percent: Percentage at which to escalate (default 90%)
+
+        Returns:
+            BudgetEnforcementResult with detailed status
+        """
+        # Check project budget
+        project_budget = self._state.config.project_budget_usd
+        if project_budget is not None:
+            project_spent = self._state.total_spent_usd
+            project_remaining = project_budget - project_spent
+
+            if project_spent + amount_usd > project_budget:
+                return BudgetEnforcementResult(
+                    allowed=False,
+                    exceeded_type="project",
+                    limit_usd=project_budget,
+                    current_usd=project_spent,
+                    requested_usd=amount_usd,
+                    remaining_usd=max(0, project_remaining),
+                    should_escalate=True,
+                    should_abort=project_remaining <= 0,  # Hard abort if nothing left
+                    message=(
+                        f"Project budget exceeded: ${project_spent:.2f} spent "
+                        f"of ${project_budget:.2f} limit, "
+                        f"requested ${amount_usd:.2f}"
+                    ),
+                )
+
+            # Check if approaching soft limit (escalate for approval)
+            if (project_spent / project_budget * 100) >= soft_limit_percent:
+                return BudgetEnforcementResult(
+                    allowed=True,
+                    limit_usd=project_budget,
+                    current_usd=project_spent,
+                    requested_usd=amount_usd,
+                    remaining_usd=project_remaining,
+                    should_escalate=True,  # Ask human for approval
+                    should_abort=False,
+                    message=(
+                        f"Project budget at {project_spent/project_budget*100:.1f}%: "
+                        f"${project_remaining:.2f} remaining"
+                    ),
+                )
+
+        # Check task budget
+        task_budget = self.get_task_budget(task_id)
+        if task_budget is not None:
+            task_spent = self.get_task_spent(task_id)
+            task_remaining = task_budget - task_spent
+
+            if task_spent + amount_usd > task_budget:
+                return BudgetEnforcementResult(
+                    allowed=False,
+                    exceeded_type=f"task:{task_id}",
+                    limit_usd=task_budget,
+                    current_usd=task_spent,
+                    requested_usd=amount_usd,
+                    remaining_usd=max(0, task_remaining),
+                    should_escalate=True,
+                    should_abort=task_remaining <= 0,
+                    message=(
+                        f"Task {task_id} budget exceeded: ${task_spent:.2f} spent "
+                        f"of ${task_budget:.2f} limit, "
+                        f"requested ${amount_usd:.2f}"
+                    ),
+                )
+
+        # All checks passed
+        project_remaining = self.get_project_remaining()
+        return BudgetEnforcementResult(
+            allowed=True,
+            current_usd=self._state.total_spent_usd,
+            requested_usd=amount_usd,
+            remaining_usd=project_remaining,
+            should_escalate=False,
+            should_abort=False,
+            message="Budget check passed",
+        )
+
+    def is_budget_exceeded(self, task_id: Optional[str] = None) -> bool:
+        """Quick check if any budget is currently exceeded.
+
+        Args:
+            task_id: Optional task ID to also check task budget
+
+        Returns:
+            True if any budget limit is exceeded
+        """
+        project_budget = self._state.config.project_budget_usd
+        if project_budget is not None:
+            if self._state.total_spent_usd >= project_budget:
+                return True
+
+        if task_id:
+            task_budget = self.get_task_budget(task_id)
+            if task_budget is not None:
+                task_spent = self.get_task_spent(task_id)
+                if task_spent >= task_budget:
+                    return True
+
+        return False
+
+    def get_enforcement_status(self) -> dict[str, Any]:
+        """Get current enforcement status for workflow state.
+
+        Returns summary suitable for including in workflow state updates.
+
+        Returns:
+            Enforcement status dictionary
+        """
+        project_budget = self._state.config.project_budget_usd
+        project_remaining = self.get_project_remaining()
+
+        return {
+            "budget_enabled": self._state.config.enabled,
+            "project_budget_usd": project_budget,
+            "project_spent_usd": self._state.total_spent_usd,
+            "project_remaining_usd": project_remaining,
+            "project_exceeded": (
+                project_budget is not None and
+                self._state.total_spent_usd >= project_budget
+            ),
+            "project_percent_used": (
+                self._state.total_spent_usd / project_budget * 100
+                if project_budget else 0
+            ),
+            "task_budgets_set": len(self._state.config.task_budgets),
+            "default_task_budget_usd": self._state.config.task_budget_usd,
+            "invocation_budget_usd": self._state.config.invocation_budget_usd,
+        }
 
     def record_spend(
         self,
