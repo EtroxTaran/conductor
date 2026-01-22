@@ -2,7 +2,7 @@
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.5 -->
+<!-- Version: 1.6 -->
 <!-- Last Updated: 2026-01-22 -->
 
 ## How to Add a Lesson
@@ -16,6 +16,32 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - Universal Agent Loop Pattern for All Agents
+
+- **Issue**: Ralph Wiggum loop only worked for Claude; Cursor/Gemini couldn't use iterative TDD
+- **Root Cause**: Hardcoded Claude CLI, completion patterns, and no model selection
+- **Fix**: Implemented Universal Agent Loop with:
+  - Agent Adapter Layer: Unified interface for Claude, Cursor, Gemini (`orchestrator/agents/adapter.py`)
+  - Model selection: codex-5.2/composer for Cursor, gemini-2.0-flash/pro for Gemini, sonnet/opus/haiku for Claude
+  - Verification Strategies: Pluggable tests/lint/security/composite verification
+  - Unified Loop Runner: Works with any agent, budget control, error context
+  - Completion patterns: `<promise>DONE</promise>` (Claude), `{"status": "done"}` (Cursor), `DONE`/`COMPLETE` (Gemini)
+- **Prevention**:
+  - Use adapter pattern for new agents
+  - Each agent defines its own completion patterns
+  - Model selection via env vars: LOOP_AGENT, LOOP_MODEL
+  - Enable with USE_UNIFIED_LOOP=true
+- **Applies To**: all
+- **Files Changed**:
+  - `orchestrator/agents/adapter.py` (new - 800 lines)
+  - `orchestrator/langgraph/integrations/unified_loop.py` (new - 710 lines)
+  - `orchestrator/langgraph/integrations/verification.py` (new - 750 lines)
+  - `orchestrator/agents/cursor_agent.py` (modified - model selection)
+  - `orchestrator/agents/gemini_agent.py` (modified - model selection)
+  - `tests/test_agent_adapters.py` (new - 36 tests)
+  - `tests/test_verification_strategies.py` (new - 41 tests)
+  - `tests/test_unified_loop.py` (new - 46 tests)
 
 ### 2026-01-22 - GSD and Ralph Wiggum Pattern Enhancements
 

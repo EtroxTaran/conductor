@@ -1,8 +1,8 @@
 # Meta-Architect System Status
 
-**Last Updated**: 2026-01-21
-**Version**: 3.0
-**Test Coverage**: 765 tests passing
+**Last Updated**: 2026-01-22
+**Version**: 3.1
+**Test Coverage**: 1250+ tests passing
 
 ---
 
@@ -28,7 +28,37 @@ Meta-Architect is a production-grade multi-agent orchestration system that coord
 PRODUCT.md → task_breakdown → select_task → implement_task → verify_task → [loop until done]
 ```
 
-### 2. Agent Registry
+### 2. Universal Agent Loop System
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Agent Adapter | `orchestrator/agents/adapter.py` | Unified interface for all agents |
+| Unified Loop | `orchestrator/langgraph/integrations/unified_loop.py` | Iterative TDD execution |
+| Verification | `orchestrator/langgraph/integrations/verification.py` | Pluggable verification strategies |
+
+**Supported Agents**:
+
+| Agent | Models | Completion Signal | Capabilities |
+|-------|--------|-------------------|--------------|
+| Claude | sonnet, opus, haiku | `<promise>DONE</promise>` | Session, plan mode, budget |
+| Cursor | codex-5.2, composer | `{"status": "done"}` | Model selection, JSON output |
+| Gemini | gemini-2.0-flash, gemini-2.0-pro | `DONE`, `COMPLETE` | Model selection |
+
+**Verification Strategies**:
+
+| Strategy | Description | Frameworks |
+|----------|-------------|------------|
+| tests | Run test suite | pytest, jest, vitest, bun test, cargo test, go test |
+| lint | Run linters | ruff, eslint, clippy, golangci-lint |
+| security | Run security scans | bandit, npm audit, cargo audit, semgrep |
+| composite | Combine multiple strategies | Configurable |
+
+**Environment Variables**:
+- `USE_UNIFIED_LOOP=true` - Enable unified loop
+- `LOOP_AGENT=cursor` - Override agent selection
+- `LOOP_MODEL=codex-5.2` - Override model selection
+
+### 4. Agent Registry
 
 | Agent | Role | Primary CLI | Reviewers |
 |-------|------|-------------|-----------|
@@ -47,7 +77,7 @@ PRODUCT.md → task_breakdown → select_task → implement_task → verify_task
 
 **File**: `orchestrator/registry/agents.py`
 
-### 3. Review System (4-Eyes Protocol)
+### 5. Review System (4-Eyes Protocol)
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
@@ -65,7 +95,7 @@ Agent Work → Cursor Review || Gemini Review → Fan-In → Decision
     └──────────── Feedback Loop ←───────── Needs Changes
 ```
 
-### 4. Error Handling & Recovery
+### 6. Error Handling & Recovery
 
 | Error Type | Recovery Strategy |
 |------------|-------------------|
@@ -78,7 +108,7 @@ Agent Work → Cursor Review || Gemini Review → Fan-In → Decision
 
 **File**: `orchestrator/recovery/handlers.py`
 
-### 5. Logging System
+### 7. Logging System
 
 | Output | Location | Format |
 |--------|----------|--------|
@@ -93,7 +123,7 @@ Agent Work → Cursor Review || Gemini Review → Fan-In → Decision
 
 **File**: `orchestrator/utils/logging.py`
 
-### 6. Escalation System
+### 8. Escalation System
 
 When errors can't be resolved automatically, escalations are written to:
 ```
@@ -108,7 +138,7 @@ When errors can't be resolved automatically, escalations are written to:
 - Recommended action
 - Severity level (low, medium, high, critical)
 
-### 7. Rate Limiting
+### 9. Rate Limiting
 
 | Service | RPM | TPM | Hourly Cost Limit |
 |---------|-----|-----|-------------------|
@@ -123,7 +153,7 @@ When errors can't be resolved automatically, escalations are written to:
 - Cost tracking per day/hour
 - Concurrent request support
 
-### 8. UI System
+### 10. UI System
 
 | Mode | Description |
 |------|-------------|
@@ -287,6 +317,9 @@ python -m orchestrator --project <name> --rollback 3
 | Module | Tests | Status |
 |--------|-------|--------|
 | Agent Registry | 19 | Passing |
+| Agent Adapters | 36 | Passing |
+| Verification Strategies | 41 | Passing |
+| Unified Loop | 46 | Passing |
 | Review Cycle | 17 | Passing |
 | Cleanup & Recovery | 16 | Passing |
 | SDK Rate Limiter | 46 | Passing |
@@ -295,7 +328,13 @@ python -m orchestrator --project <name> --rollback 3
 | Orchestrator | 12 | Passing |
 | Validators | 20+ | Passing |
 | Git Worktree | 18 | Passing |
-| **Total** | **765** | **All Passing** |
+| Session Manager | 21 | Passing |
+| Error Context | 32 | Passing |
+| Budget Manager | 25 | Passing |
+| Audit Trail | 22 | Passing |
+| Claude Agent Enhanced | 30 | Passing |
+| GSD Enhancements | 50+ | Passing |
+| **Total** | **1250+** | **All Passing** |
 
 Run tests:
 ```bash

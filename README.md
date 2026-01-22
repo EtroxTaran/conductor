@@ -17,7 +17,7 @@ A **production-ready multi-agent orchestration system** that coordinates Claude 
 - [Configuration](#configuration)
 - [Approval & Conflict Resolution](#approval--conflict-resolution)
 - [CLI Reference](#cli-reference)
-- [Project Updates](#project-updates)
+- [Universal Agent Loop](#universal-agent-loop)
 - [Python API](#python-api)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
@@ -485,6 +485,7 @@ meta-architect/
 │   ├── orchestrator.py     # Main Orchestrator class
 │   ├── agents/             # Agent CLI wrappers
 │   │   ├── base.py         # BaseAgent class
+│   │   ├── adapter.py      # Universal agent adapter layer
 │   │   ├── claude.py       # ClaudeAgent
 │   │   ├── cursor.py       # CursorAgent
 │   │   └── gemini.py       # GeminiAgent
@@ -510,7 +511,9 @@ meta-architect/
 │   │       ├── approval.py
 │   │       ├── conflict.py
 │   │       ├── linear.py
-│   │       └── state.py
+│   │       ├── state.py
+│   │       ├── unified_loop.py    # Universal loop runner
+│   │       └── verification.py    # Verification strategies
 │   └── utils/              # Utilities
 │       ├── state.py        # StateManager
 │       ├── logging.py      # OrchestrationLogger
@@ -525,8 +528,7 @@ meta-architect/
 │   ├── call-cursor.sh      # Cursor CLI wrapper
 │   ├── call-gemini.sh      # Gemini CLI wrapper
 │   ├── create-project.py   # Create new projects
-│   ├── sync-rules.py       # Sync shared rules to agents
-│   └── sync-project-templates.py  # Sync templates to projects
+│   └── sync-rules.py       # Sync shared rules to agents
 ├── shared-rules/           # Shared rules for all agents
 │   ├── core-rules.md
 │   ├── coding-standards.md
@@ -534,7 +536,6 @@ meta-architect/
 │   ├── cli-reference.md
 │   ├── lessons-learned.md
 │   └── agent-overrides/    # Agent-specific extensions
-├── project-templates/      # Project templates
 ├── projects/               # Project containers
 ├── schemas/                # JSON validation schemas
 ├── tests/                  # Test suite
@@ -663,107 +664,72 @@ bash scripts/call-gemini.sh <prompt-file> <output-file> [project-dir]
 | `/validate` | Run Phase 2 validation manually |
 | `/verify` | Run Phase 4 verification manually |
 | `/resolve-conflict` | Resolve agent disagreements |
-| `/check-updates` | Check for available template updates |
-| `/update-project` | Apply updates with automatic backup |
 
 ---
 
-## Project Updates
+## Universal Agent Loop
 
-Meta-architect includes a versioning and update system to keep projects synchronized with the latest templates.
+The system supports iterative TDD execution across all agents through a unified interface.
 
-### Version Tracking
+### Supported Agents and Models
 
-The current meta-architect version is stored in `VERSION` at the repo root. Each project tracks its version in `.project-config.json`:
+| Agent | Available Models | Completion Signal | Key Capabilities |
+|-------|------------------|-------------------|------------------|
+| **Claude** | sonnet, opus, haiku | `<promise>DONE</promise>` | Session continuity, plan mode, budget control |
+| **Cursor** | codex-5.2, composer | `{"status": "done"}` | Model selection, JSON output |
+| **Gemini** | gemini-2.0-flash, gemini-2.0-pro | `DONE`, `COMPLETE` | Model selection |
 
-```json
-{
-  "versioning": {
-    "meta_architect_version": "0.2.0",
-    "last_sync_version": "0.2.0",
-    "update_policy": "prompt"
-  }
-}
+### Verification Strategies
+
+The loop supports pluggable verification after each iteration:
+
+| Strategy | Description | Frameworks |
+|----------|-------------|------------|
+| `tests` | Run test suite | pytest, jest, vitest, bun test, cargo test, go test |
+| `lint` | Run linters | ruff, eslint, clippy, golangci-lint |
+| `security` | Run security scans | bandit, npm audit, cargo audit, semgrep |
+| `composite` | Combine multiple | Configurable combination |
+| `none` | No verification | For tasks without tests |
+
+### Usage
+
+```python
+from orchestrator.langgraph.integrations.unified_loop import (
+    UnifiedLoopRunner,
+    UnifiedLoopConfig,
+    LoopContext,
+)
+
+# Configure the loop
+config = UnifiedLoopConfig(
+    agent_type="cursor",
+    model="codex-5.2",
+    verification="tests",
+    max_iterations=10,
+    budget_per_iteration=0.50,
+)
+
+# Create runner
+runner = UnifiedLoopRunner(project_dir, config)
+
+# Run with context
+context = LoopContext(
+    task_id="T1",
+    title="Implement user authentication",
+    test_files=["tests/test_auth.py"],
+)
+
+result = await runner.run("T1", context=context)
+print(f"Success: {result.success}, Iterations: {result.iterations}")
 ```
 
-### Checking for Updates
+### Environment Variables
 
-```bash
-# Check updates for a specific project
-python -m orchestrator --project my-app --check-updates
-
-# Check updates for all projects
-python -m orchestrator --check-all-updates
-```
-
-**Example output:**
-```
-Update Check: my-app
---------------------------------------------------
-  Current version:  0.1.0
-  Latest version:   0.2.0
-  Status:           Updates available
-
-  Changes since 0.1.0:
-  [0.2.0] 2026-01-21
-    - Added project update mechanism
-    - Added observability system
-    - Added Ralph Wiggum loop
-
-  Files that would be updated:
-    - CLAUDE.md
-    - GEMINI.md
-    - .cursor/rules
-
-  Run '/update-project my-app' to apply updates.
-```
-
-### Applying Updates
-
-```bash
-# Apply updates with automatic backup
-python -m orchestrator --project my-app --update
-
-# Preview changes without applying
-python -m orchestrator --project my-app --update --dry-run
-```
-
-Updates are applied safely:
-1. Creates backup in `.workflow/backups/<timestamp>/`
-2. Syncs templates from `project-templates/`
-3. Preserves `project-overrides/`
-4. Updates version in `.project-config.json`
-
-### Backup and Rollback
-
-```bash
-# List available backups
-python -m orchestrator --project my-app --list-backups
-
-# Rollback to a specific backup
-python -m orchestrator --project my-app --rollback-backup 20260121_150000
-```
-
-### What Gets Updated
-
-| File | Updated | Notes |
-|------|---------|-------|
-| `CLAUDE.md` | Yes | Context rules from template |
-| `GEMINI.md` | Yes | Context rules from template |
-| `.cursor/rules` | Yes | Cursor context from template |
-| `PRODUCT.md` | **No** | User content preserved |
-| `.workflow/` | **No** | Workflow state preserved |
-| `src/`, `tests/` | **No** | Application code preserved |
-
-### Update Policies
-
-Configure in `.project-config.json`:
-
-| Policy | Behavior |
-|--------|----------|
-| `auto` | Automatically apply non-breaking updates |
-| `prompt` | Show notification, require explicit command (default) |
-| `manual` | Never auto-check, user must run updates explicitly |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `USE_UNIFIED_LOOP` | Enable unified loop | `false` |
+| `LOOP_AGENT` | Override agent selection | - |
+| `LOOP_MODEL` | Override model selection | - |
 
 ---
 
