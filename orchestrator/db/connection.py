@@ -224,8 +224,15 @@ class Connection:
                 # Flatten results from multiple statements
                 records = []
                 for stmt_result in result:
-                    if isinstance(stmt_result, dict) and "result" in stmt_result:
-                        records.extend(stmt_result["result"] or [])
+                    if isinstance(stmt_result, dict):
+                        if "result" in stmt_result:
+                            # Standard format: {"result": [...], "status": "OK"}
+                            records.extend(stmt_result["result"] or [])
+                        elif "id" in stmt_result:
+                            # Direct record format (SurrealDB record with id field)
+                            records.append(stmt_result)
+                        else:
+                            logger.debug(f"Skipping unknown query result format: {list(stmt_result.keys())}")
                     elif isinstance(stmt_result, list):
                         records.extend(stmt_result)
                 return records

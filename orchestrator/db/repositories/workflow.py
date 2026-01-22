@@ -189,7 +189,7 @@ class WorkflowRepository(BaseRepository[WorkflowState]):
             result = await conn.query(
                 """
                 UPDATE workflow_state
-                SET $updates
+                MERGE $updates
                 RETURN AFTER
                 """,
                 {"updates": updates},

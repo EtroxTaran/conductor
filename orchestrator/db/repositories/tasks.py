@@ -214,7 +214,7 @@ class TaskRepository(BaseRepository[Task]):
             result = await conn.query(
                 """
                 UPDATE tasks
-                SET $updates
+                MERGE $updates
                 WHERE task_id = $task_id
                 RETURN AFTER
                 """,
