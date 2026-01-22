@@ -421,6 +421,9 @@ class WorkflowRepository(BaseRepository[WorkflowState]):
             if p.get("status") == "completed"
         )
 
+        # Get git commit count
+        git_commits = await self.get_git_commits()
+
         return {
             "project_name": self.project_name,  # From repository, not state
             "current_phase": state.current_phase,
@@ -435,9 +438,103 @@ class WorkflowRepository(BaseRepository[WorkflowState]):
             "discussion_complete": state.discussion_complete,
             "research_complete": state.research_complete,
             "token_usage": state.token_usage,
+            "total_commits": len(git_commits),
             "created_at": state.created_at.isoformat() if state.created_at else None,
             "updated_at": state.updated_at.isoformat() if state.updated_at else None,
         }
+
+    async def record_git_commit(
+        self,
+        phase: int,
+        commit_hash: str,
+        message: str,
+        task_id: Optional[str] = None,
+        files_changed: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """Record a git commit.
+
+        Args:
+            phase: Phase number when commit was made
+            commit_hash: Git commit hash
+            message: Commit message
+            task_id: Optional task ID
+            files_changed: Optional list of changed files
+
+        Returns:
+            Created commit record
+        """
+        async with get_connection(self.project_name) as conn:
+            result = await conn.create(
+                "git_commits",
+                {
+                    "phase": phase,
+                    "commit_hash": commit_hash,
+                    "message": message,
+                    "task_id": task_id,
+                    "files_changed": files_changed or [],
+                },
+            )
+            logger.info(f"Recorded git commit {commit_hash[:8]} for phase {phase}")
+            return result
+
+    async def get_git_commits(
+        self,
+        phase: Optional[int] = None,
+        task_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Get git commits with optional filters.
+
+        Args:
+            phase: Optional phase filter
+            task_id: Optional task ID filter
+
+        Returns:
+            List of commit records
+        """
+        async with get_connection(self.project_name) as conn:
+            if phase is not None:
+                results = await conn.query(
+                    "SELECT * FROM git_commits WHERE phase = $phase ORDER BY created_at DESC",
+                    {"phase": phase},
+                )
+            elif task_id is not None:
+                results = await conn.query(
+                    "SELECT * FROM git_commits WHERE task_id = $task_id ORDER BY created_at DESC",
+                    {"task_id": task_id},
+                )
+            else:
+                results = await conn.query(
+                    "SELECT * FROM git_commits ORDER BY created_at DESC"
+                )
+            return results or []
+
+    async def reset_to_phase(self, phase_num: int) -> Optional[WorkflowState]:
+        """Reset workflow state to before a specific phase.
+
+        Args:
+            phase_num: Phase to reset to (this phase and later will be reset)
+
+        Returns:
+            Updated state
+        """
+        state = await self.get_state()
+        if not state:
+            return None
+
+        # Reset specified phase and all later phases
+        phase_status = state.phase_status.copy()
+        for i in range(phase_num, 6):
+            phase_key = str(i)
+            if phase_key in phase_status:
+                phase_status[phase_key] = {
+                    "status": "pending",
+                    "attempts": 0,
+                }
+
+        return await self.update_state(
+            current_phase=phase_num,
+            phase_status=phase_status,
+        )
 
 
 # Global repository cache

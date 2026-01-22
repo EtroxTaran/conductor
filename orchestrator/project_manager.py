@@ -400,10 +400,9 @@ class ProjectManager:
             return None
 
     def _load_project_state(self, project_dir: Path) -> Optional[dict]:
-        """Load project workflow state.
+        """Load project workflow state from database.
 
-        Uses StateProjector to get state from checkpoint if available,
-        falling back to state.json for backwards compatibility.
+        Uses WorkflowStorageAdapter to get state from SurrealDB.
 
         Args:
             project_dir: Path to project directory
@@ -412,30 +411,26 @@ class ProjectManager:
             State dict or None
         """
         try:
-            from .utils.state_projector import StateProjector
-            projector = StateProjector(project_dir)
-            state = projector.get_state()
-            if state is not None:
-                return state
-        except ImportError:
-            pass  # StateProjector not available, fall back to direct read
+            from .storage.workflow_adapter import WorkflowStorageAdapter
+            adapter = WorkflowStorageAdapter(project_dir)
+            state = adapter.get_state()
+            if state:
+                return {
+                    "project_dir": state.project_dir,
+                    "current_phase": state.current_phase,
+                    "phase_status": state.phase_status,
+                    "iteration_count": state.iteration_count,
+                    "execution_mode": state.execution_mode,
+                    "discussion_complete": state.discussion_complete,
+                    "research_complete": state.research_complete,
+                }
         except Exception as e:
-            # Log but don't fail - fall back to direct read
-            logger.debug(f"StateProjector failed for {project_dir}: {e}")
+            logger.debug(f"WorkflowStorageAdapter failed for {project_dir}: {e}")
 
-        # Fallback: direct read from state.json
-        state_path = project_dir / ".workflow" / "state.json"
-        if not state_path.exists():
-            return None
-
-        try:
-            with open(state_path) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return None
+        return None
 
     def update_project_state(self, name: str, updates: dict) -> bool:
-        """Update project workflow state.
+        """Update project workflow state in database.
 
         Args:
             name: Project name
@@ -443,34 +438,18 @@ class ProjectManager:
 
         Returns:
             True if successful
-
-        Raises:
-            OrchestratorBoundaryError: If write violates boundaries (shouldn't happen
-                for state.json but enforced for safety)
         """
         project_dir = self.get_project(name)
         if not project_dir:
             return False
 
-        state_path = project_dir / ".workflow" / "state.json"
-
-        # Validate boundary (should always pass for .workflow/)
-        ensure_orchestrator_can_write(project_dir, state_path)
-
-        # Ensure .workflow directory exists
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-
-        state = self._load_project_state(project_dir) or {}
-
-        # Apply updates
-        state.update(updates)
-        state["updated_at"] = datetime.now().isoformat()
-
         try:
-            with open(state_path, "w") as f:
-                json.dump(state, f, indent=2)
-            return True
-        except IOError:
+            from .storage.workflow_adapter import WorkflowStorageAdapter
+            adapter = WorkflowStorageAdapter(project_dir)
+            result = adapter.update_state(**updates)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Failed to update project state: {e}")
             return False
 
     def safe_write_workflow_file(

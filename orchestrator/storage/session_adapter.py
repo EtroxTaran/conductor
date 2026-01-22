@@ -1,7 +1,7 @@
 """Session storage adapter.
 
-Provides unified interface for session management with automatic backend selection.
-Uses SurrealDB when enabled, falls back to file-based JSON otherwise.
+Provides unified interface for session management using SurrealDB.
+This is the DB-only version - no file fallback.
 """
 
 import hashlib
@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 class SessionStorageAdapter(SessionStorageProtocol):
     """Storage adapter for session management.
 
-    Automatically selects between file-based and SurrealDB backends
-    based on configuration. Provides a unified interface for session
-    operations.
+    Uses SurrealDB as the only storage backend. No file fallback.
 
     Usage:
         adapter = SessionStorageAdapter(project_dir)
@@ -53,26 +51,7 @@ class SessionStorageAdapter(SessionStorageProtocol):
         """
         self.project_dir = Path(project_dir)
         self.project_name = project_name or self.project_dir.name
-
-        # Lazy-initialized backends
-        self._file_backend: Optional[Any] = None
         self._db_backend: Optional[Any] = None
-
-    @property
-    def _use_db(self) -> bool:
-        """Check if SurrealDB should be used."""
-        try:
-            from orchestrator.db import is_surrealdb_enabled
-            return is_surrealdb_enabled()
-        except ImportError:
-            return False
-
-    def _get_file_backend(self) -> Any:
-        """Get or create file backend."""
-        if self._file_backend is None:
-            from orchestrator.agents.session_manager import SessionManager
-            self._file_backend = SessionManager(self.project_dir)
-        return self._file_backend
 
     def _get_db_backend(self) -> Any:
         """Get or create database backend."""
@@ -115,33 +94,15 @@ class SessionStorageAdapter(SessionStorageProtocol):
         if session_id is None:
             session_id = self._generate_session_id(task_id)
 
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(
-                    db.create_session(
-                        session_id=session_id,
-                        task_id=task_id,
-                        agent=agent,
-                    )
-                )
-                return self._db_session_to_data(session)
-            except Exception as e:
-                logger.warning(f"Failed to create DB session, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        session = file_backend.create_session(task_id, session_id=session_id)
-        return SessionData(
-            id=session.session_id,
-            task_id=session.task_id,
-            agent=agent,
-            status="active",
-            invocation_count=session.iteration,
-            total_cost_usd=0.0,
-            created_at=session.created_at,
-            updated_at=session.last_used_at,
+        db = self._get_db_backend()
+        session = run_async(
+            db.create_session(
+                session_id=session_id,
+                task_id=task_id,
+                agent=agent,
+            )
         )
+        return self._db_session_to_data(session)
 
     def get_session(self, session_id: str) -> Optional[SessionData]:
         """Get session by ID.
@@ -152,30 +113,10 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             SessionData if found
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_session(session_id))
-                if session:
-                    return self._db_session_to_data(session)
-                return None
-            except Exception as e:
-                logger.warning(f"Failed to get DB session, falling back to file: {e}")
-
-        # File backend - search by session_id
-        file_backend = self._get_file_backend()
-        for session in file_backend.list_sessions(include_inactive=True):
-            if session.session_id == session_id:
-                return SessionData(
-                    id=session.session_id,
-                    task_id=session.task_id,
-                    agent="claude",
-                    status="active" if session.is_active else "closed",
-                    invocation_count=session.iteration,
-                    total_cost_usd=0.0,
-                    created_at=session.created_at,
-                    updated_at=session.last_used_at,
-                )
+        db = self._get_db_backend()
+        session = run_async(db.get_session(session_id))
+        if session:
+            return self._db_session_to_data(session)
         return None
 
     def get_active_session(self, task_id: str) -> Optional[SessionData]:
@@ -187,30 +128,10 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             Active SessionData if exists
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    return self._db_session_to_data(session)
-                return None
-            except Exception as e:
-                logger.warning(f"Failed to get DB active session, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        session = file_backend.get_session(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
         if session:
-            return SessionData(
-                id=session.session_id,
-                task_id=session.task_id,
-                agent="claude",
-                status="active",
-                invocation_count=session.iteration,
-                total_cost_usd=0.0,
-                created_at=session.created_at,
-                updated_at=session.last_used_at,
-            )
+            return self._db_session_to_data(session)
         return None
 
     def get_resume_args(self, task_id: str) -> list[str]:
@@ -227,19 +148,11 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             CLI arguments list
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    return ["--resume", session.id]
-                return []
-            except Exception as e:
-                logger.warning(f"Failed to get DB resume args, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend.get_resume_args(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
+        if session:
+            return ["--resume", session.id]
+        return []
 
     def get_session_id_args(self, task_id: str) -> list[str]:
         """Get CLI arguments to set a new session ID.
@@ -253,21 +166,13 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             CLI arguments list
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    return ["--session-id", session.id]
-                # Create new session
-                new_session = self.create_session(task_id)
-                return ["--session-id", new_session.id]
-            except Exception as e:
-                logger.warning(f"Failed to get DB session ID args, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend.get_session_id_args(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
+        if session:
+            return ["--session-id", session.id]
+        # Create new session
+        new_session = self.create_session(task_id)
+        return ["--session-id", new_session.id]
 
     def touch_session(self, task_id: str) -> None:
         """Update the session's last used timestamp.
@@ -275,40 +180,24 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Args:
             task_id: Task identifier
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    run_async(db.touch_session(session.id))
-                return
-            except Exception as e:
-                logger.warning(f"Failed to touch DB session, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        file_backend.touch_session(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
+        if session:
+            run_async(db.touch_session(session.id))
 
     def capture_session_id_from_output(self, task_id: str, output: str) -> Optional[str]:
         """Capture and record session ID from CLI output.
 
-        Some CLI responses include a session ID that should be captured
-        for future resume operations.
+        For DB backend, sessions are managed internally.
 
         Args:
             task_id: Task identifier
             output: CLI output that may contain session ID
 
         Returns:
-            Extracted session ID if found
+            None (DB backend manages sessions internally)
         """
-        # For DB backend, sessions are managed internally
-        if self._use_db:
-            return None
-
-        # File backend handles session ID extraction
-        file_backend = self._get_file_backend()
-        return file_backend.capture_session_id_from_output(task_id, output)
+        return None
 
     def close_session(self, task_id: str) -> bool:
         """Close the session for a task.
@@ -319,17 +208,9 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             True if session was closed
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                result = run_async(db.close_task_sessions(task_id))
-                return result is not None
-            except Exception as e:
-                logger.warning(f"Failed to close DB session, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend.close_session(task_id)
+        db = self._get_db_backend()
+        result = run_async(db.close_task_sessions(task_id))
+        return result is not None
 
     def record_invocation(self, task_id: str, cost_usd: float = 0.0) -> None:
         """Record an invocation in the current session.
@@ -338,20 +219,10 @@ class SessionStorageAdapter(SessionStorageProtocol):
             task_id: Task identifier
             cost_usd: Cost of this invocation
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                # Get active session first
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    run_async(db.record_invocation(session.id, cost_usd))
-                return
-            except Exception as e:
-                logger.warning(f"Failed to record DB invocation, falling back to file: {e}")
-
-        # File backend - just touch the session (file backend doesn't track cost)
-        file_backend = self._get_file_backend()
-        file_backend.touch_session(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
+        if session:
+            run_async(db.record_invocation(session.id, cost_usd))
 
     def get_or_create_session(
         self,
@@ -384,33 +255,12 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             List of sessions
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                sessions = run_async(db.find_all())
-                result = [self._db_session_to_data(s) for s in sessions]
-                if not include_inactive:
-                    result = [s for s in result if s.status == "active"]
-                return result
-            except Exception as e:
-                logger.warning(f"Failed to list DB sessions, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        sessions = file_backend.list_sessions(include_inactive)
-        return [
-            SessionData(
-                id=s.session_id,
-                task_id=s.task_id,
-                agent="claude",
-                status="active" if s.is_active else "closed",
-                invocation_count=s.iteration,
-                total_cost_usd=0.0,
-                created_at=s.created_at,
-                updated_at=s.last_used_at,
-            )
-            for s in sessions
-        ]
+        db = self._get_db_backend()
+        sessions = run_async(db.find_all())
+        result = [self._db_session_to_data(s) for s in sessions]
+        if not include_inactive:
+            result = [s for s in result if s.status == "active"]
+        return result
 
     def delete_session(self, task_id: str) -> bool:
         """Delete a session completely.
@@ -421,20 +271,12 @@ class SessionStorageAdapter(SessionStorageProtocol):
         Returns:
             True if deleted
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                session = run_async(db.get_active_session(task_id))
-                if session:
-                    run_async(db.delete(session.id))
-                    return True
-                return False
-            except Exception as e:
-                logger.warning(f"Failed to delete DB session, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend.delete_session(task_id)
+        db = self._get_db_backend()
+        session = run_async(db.get_active_session(task_id))
+        if session:
+            run_async(db.delete(session.id))
+            return True
+        return False
 
     @staticmethod
     def _db_session_to_data(session: Any) -> SessionData:

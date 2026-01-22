@@ -10,7 +10,7 @@ import ssl
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import Any, AsyncGenerator, Callable, Optional, Union
 
 import requests
 import websockets
@@ -97,7 +97,7 @@ class Connection:
         """
         self.config = config
         self.database = database
-        self._client: Optional[Surreal] = None
+        self._client: Optional[Union[AsyncSurreal, InsecureAsyncWsSurrealConnection]] = None
         self._connected = False
         self._lock = asyncio.Lock()
 

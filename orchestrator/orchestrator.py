@@ -14,12 +14,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .utils.state import StateManager, PhaseStatus
+from .models import PhaseStatus
+from .storage.workflow_adapter import WorkflowStorageAdapter, get_workflow_storage
 from .utils.logging import OrchestrationLogger, LogLevel
 from .utils.git_operations import GitOperationsManager
 from .utils.log_manager import LogManager, load_config as load_log_config, should_auto_cleanup
 from .utils.handoff import HandoffGenerator, generate_handoff
 from .project_manager import ProjectManager
+from .db.config import require_db, DatabaseRequiredError
 
 
 def is_langgraph_enabled() -> bool:
@@ -29,6 +31,37 @@ def is_langgraph_enabled() -> bool:
         True if ORCHESTRATOR_USE_LANGGRAPH is set to 'true' or '1'
     """
     return os.environ.get("ORCHESTRATOR_USE_LANGGRAPH", "").lower() in ("true", "1")
+
+
+async def validate_db_connection(project_name: str) -> None:
+    """Validate database is available and schema is applied.
+
+    This function should be called before starting any workflow
+    to ensure fail-fast behavior if the database is unavailable.
+
+    Args:
+        project_name: Project name for database selection
+
+    Raises:
+        DatabaseRequiredError: If database is not available or query fails
+    """
+    try:
+        from .db import get_connection, ensure_schema
+
+        # Test connection with a simple query
+        async with get_connection(project_name) as conn:
+            await conn.query("SELECT 1")
+
+        # Ensure schema is applied
+        await ensure_schema(project_name)
+
+    except DatabaseRequiredError:
+        raise
+    except Exception as e:
+        raise DatabaseRequiredError(
+            f"SurrealDB connection failed: {e}\n"
+            f"Ensure SURREAL_URL is set and the database is accessible."
+        ) from e
 
 
 class Orchestrator:
@@ -72,18 +105,27 @@ class Orchestrator:
             auto_commit: Whether to auto-commit after phases
             console_output: Whether to print to console
             log_level: Minimum log level
+
+        Raises:
+            DatabaseRequiredError: If SurrealDB is not configured
         """
+        # Validate database is available (fail-fast)
+        require_db()
+
         self.project_dir = Path(project_dir).resolve()
         self.max_retries = max_retries
         self.auto_commit = auto_commit
 
-        # Initialize state manager
-        self.state = StateManager(self.project_dir)
-        self.state.ensure_workflow_dir()
+        # Initialize storage adapter (DB-only)
+        self.storage = get_workflow_storage(self.project_dir)
+
+        # Ensure workflow directory exists (still needed for logs)
+        self.workflow_dir = self.project_dir / ".workflow"
+        self.workflow_dir.mkdir(exist_ok=True)
 
         # Initialize logger
         self.logger = OrchestrationLogger(
-            workflow_dir=self.state.workflow_dir,
+            workflow_dir=self.workflow_dir,
             console_output=console_output,
             min_level=log_level,
         )
@@ -195,7 +237,7 @@ class Orchestrator:
             commit_hash = self.git.auto_commit(commit_message)
 
             if commit_hash:
-                self.state.record_commit(phase_num, commit_hash, commit_message)
+                self.storage.record_git_commit(phase_num, commit_hash, commit_message)
                 self.logger.commit(phase_num, commit_hash, commit_message)
             else:
                 self.logger.debug("No changes to commit")
@@ -217,8 +259,7 @@ class Orchestrator:
         Returns:
             Dictionary with status information
         """
-        self.state.load()
-        return self.state.get_summary()
+        return self.storage.get_summary()
 
     def reset(self, phase: Optional[int] = None) -> None:
         """Reset workflow or a specific phase.
@@ -226,24 +267,11 @@ class Orchestrator:
         Args:
             phase: Phase number to reset, or None to reset all
         """
-        self.state.load()
-
         if phase:
-            self.state.reset_phase(phase)
+            self.storage.reset_to_phase(phase)
             self.logger.info(f"Reset phase {phase}")
         else:
-            for phase_num, _ in self.PHASE_NAMES:
-                phase_state = self.state.get_phase(phase_num)
-                phase_state.status = PhaseStatus.PENDING
-                phase_state.attempts = 0
-                phase_state.blockers = []
-                phase_state.error = None
-                phase_state.started_at = None
-                phase_state.completed_at = None
-
-            self.state.state.current_phase = 1
-            self.state.state.git_commits = []
-            self.state.save()
+            self.storage.reset_state()
             self.logger.info("Reset all phases")
 
     def rollback_to_phase(self, phase_num: int) -> dict:
@@ -258,13 +286,12 @@ class Orchestrator:
         Returns:
             Dictionary with rollback results
         """
-        self.state.load()
-        commits = self.state.state.git_commits
+        commits = self.storage.get_git_commits()
 
         target_commit = None
-        for commit in reversed(commits):
+        for commit in commits:
             if commit.get("phase", 0) < phase_num:
-                target_commit = commit.get("hash")
+                target_commit = commit.get("commit_hash")
                 break
 
         if not target_commit:
@@ -275,7 +302,7 @@ class Orchestrator:
 
         try:
             if self.git.reset_hard(target_commit):
-                self.state.reset_to_phase(phase_num)
+                self.storage.reset_to_phase(phase_num)
 
                 self.logger.info(f"Rolled back to commit {target_commit[:8]} (before phase {phase_num})")
 
@@ -302,8 +329,8 @@ class Orchestrator:
         Returns:
             Dictionary with health status information
         """
-        self.state.load()
-        state = self.state.state
+        state = self.storage.get_state()
+        summary = self.storage.get_summary()
 
         from .agents import ClaudeAgent, CursorAgent, GeminiAgent
 
@@ -319,9 +346,10 @@ class Orchestrator:
 
         all_agents_available = all(agents_status.values())
         current_phase_status = None
-        if state.current_phase:
-            phase_state = self.state.get_phase(state.current_phase)
-            current_phase_status = phase_state.status.value
+        if state and state.phase_status:
+            phase_key = str(state.current_phase)
+            phase_info = state.phase_status.get(phase_key, {})
+            current_phase_status = phase_info.get("status")
 
         health_status = "healthy"
         if not all_agents_available:
@@ -331,15 +359,15 @@ class Orchestrator:
 
         return {
             "status": health_status,
-            "project": state.project_name,
-            "current_phase": state.current_phase,
+            "project": summary.get("project_name", self.project_dir.name),
+            "current_phase": state.current_phase if state else None,
             "phase_status": current_phase_status,
-            "iteration_count": state.iteration_count,
-            "last_updated": state.updated_at,
+            "iteration_count": state.iteration_count if state else 0,
+            "last_updated": state.updated_at.isoformat() if state and state.updated_at else None,
             "agents": agents_status,
             "langgraph_enabled": is_langgraph_enabled(),
-            "has_context": state.context is not None,
-            "total_commits": len(state.git_commits),
+            "has_context": summary.get("discussion_complete", False),
+            "total_commits": summary.get("total_commits", 0),
         }
 
     async def run_langgraph(
@@ -348,6 +376,7 @@ class Orchestrator:
         start_phase: int = 1,
         end_phase: int = 5,
         skip_validation: bool = False,
+        autonomous: bool = False,
     ) -> dict:
         """Run the workflow using LangGraph.
 
@@ -356,6 +385,7 @@ class Orchestrator:
             start_phase: Phase to start from (1-5)
             end_phase: Phase to end at (1-5)
             skip_validation: Skip the validation phase (phase 2)
+            autonomous: Run fully autonomously without human consultation (default False)
 
         Returns:
             Dictionary with workflow results
@@ -364,6 +394,18 @@ class Orchestrator:
         from .ui import create_display, UICallbackHandler
 
         self.logger.banner("Multi-Agent Orchestration System (LangGraph Mode)")
+
+        # Validate DB connection before starting (fail-fast)
+        try:
+            await validate_db_connection(self.project_dir.name)
+            self.logger.info("Database connection validated")
+        except DatabaseRequiredError as e:
+            self.logger.error(str(e))
+            return {
+                "success": False,
+                "error": "Database connection required",
+                "details": str(e),
+            }
 
         prereq_ok, prereq_errors = self.check_prerequisites()
         if not prereq_ok:
@@ -375,61 +417,69 @@ class Orchestrator:
                 "details": prereq_errors,
             }
 
-        runner = WorkflowRunner(self.project_dir)
-
         self.logger.info(f"Project: {self.project_dir.name}")
-        self.logger.info(f"Checkpoint directory: {runner.checkpoint_dir}")
-        self.logger.separator()
 
         display = create_display(self.project_dir.name) if use_rich_display else None
         callback = UICallbackHandler(display) if display else None
+
+        # Determine execution mode
+        execution_mode = "afk" if autonomous else "hitl"
+        if autonomous:
+            self.logger.info("Running in autonomous mode (no human consultation)")
+        else:
+            self.logger.info("Running in interactive mode (will pause for human input)")
 
         # Pass configuration to runner
         run_config = {
             "start_phase": start_phase,
             "end_phase": end_phase,
             "skip_validation": skip_validation,
+            "execution_mode": execution_mode,
         }
 
         try:
-            if display:
-                with display.start():
-                    display.log_event("Starting LangGraph workflow", "info")
-                    result = await runner.run(progress_callback=callback, config=run_config)
+            async with WorkflowRunner(self.project_dir) as runner:
+                self.logger.info(f"Checkpoint directory: {runner.checkpoint_dir}")
+                self.logger.separator()
 
-                    success = self._check_workflow_success(result)
-                    if success:
-                        display.show_completion(True, "Workflow completed successfully!")
-                    elif result.get("next_decision") == "escalate":
-                        display.show_completion(False, "Workflow paused for human intervention")
-                    else:
-                        display.show_completion(False, "Workflow did not complete successfully")
-            else:
-                result = await runner.run(config=run_config)
+                if display:
+                    with display.start():
+                        display.log_event("Starting LangGraph workflow", "info")
+                        result = await runner.run(progress_callback=callback, config=run_config)
 
-            if self._check_workflow_success(result):
-                self.logger.banner("Workflow Complete!")
-                return {
-                    "success": True,
-                    "mode": "langgraph",
-                    "results": result,
-                }
-            else:
-                if result.get("next_decision") == "escalate":
-                    self.logger.warning("Workflow paused for human intervention")
+                        success = self._check_workflow_success(result)
+                        if success:
+                            display.show_completion(True, "Workflow completed successfully!")
+                        elif result.get("next_decision") == "escalate":
+                            display.show_completion(False, "Workflow paused for human intervention")
+                        else:
+                            display.show_completion(False, "Workflow did not complete successfully")
+                else:
+                    result = await runner.run(config=run_config)
+
+                if self._check_workflow_success(result):
+                    self.logger.banner("Workflow Complete!")
                     return {
-                        "success": False,
+                        "success": True,
                         "mode": "langgraph",
-                        "paused": True,
-                        "message": "Workflow requires human intervention",
                         "results": result,
                     }
                 else:
-                    return {
-                        "success": False,
-                        "mode": "langgraph",
-                        "results": result,
-                    }
+                    if result.get("next_decision") == "escalate":
+                        self.logger.warning("Workflow paused for human intervention")
+                        return {
+                            "success": False,
+                            "mode": "langgraph",
+                            "paused": True,
+                            "message": "Workflow requires human intervention",
+                            "results": result,
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "mode": "langgraph",
+                            "results": result,
+                        }
 
         except Exception as e:
             self.logger.error(f"LangGraph workflow failed: {e}")
@@ -460,12 +510,14 @@ class Orchestrator:
         self,
         human_response: Optional[dict] = None,
         use_rich_display: bool = True,
+        autonomous: bool = False,
     ) -> dict:
         """Resume the LangGraph workflow from checkpoint.
 
         Args:
             human_response: Optional response for human escalation
             use_rich_display: Whether to use Rich live display (default True)
+            autonomous: Run fully autonomously without human consultation (default False)
 
         Returns:
             Dictionary with workflow results
@@ -475,45 +527,69 @@ class Orchestrator:
 
         self.logger.banner("Resuming LangGraph Workflow")
 
-        runner = WorkflowRunner(self.project_dir)
+        # Validate DB connection before resuming (fail-fast)
+        try:
+            await validate_db_connection(self.project_dir.name)
+        except DatabaseRequiredError as e:
+            self.logger.error(str(e))
+            return {
+                "success": False,
+                "error": "Database connection required",
+                "details": str(e),
+            }
 
-        pending = runner.get_pending_interrupt()
-        if pending:
-            self.logger.info(f"Workflow paused at: {pending['paused_at']}")
+        # Determine execution mode
+        execution_mode = "afk" if autonomous else "hitl"
+        if autonomous:
+            self.logger.info("Resuming in autonomous mode (no human consultation)")
 
         display = create_display(self.project_dir.name) if use_rich_display else None
         callback = UICallbackHandler(display) if display else None
 
+        # Pass execution mode through config
+        resume_config = {
+            "execution_mode": execution_mode,
+        }
+
         try:
-            if display:
-                with display.start():
-                    display.log_event("Resuming LangGraph workflow", "info")
+            async with WorkflowRunner(self.project_dir) as runner:
+                pending = await runner.get_pending_interrupt_async()
+                if pending:
+                    self.logger.info(f"Workflow paused at: {pending['paused_at']}")
+
+                if display:
+                    with display.start():
+                        display.log_event("Resuming LangGraph workflow", "info")
+                        result = await runner.resume(
+                            human_response=human_response,
+                            progress_callback=callback,
+                            config=resume_config,
+                        )
+
+                        success = self._check_workflow_success(result)
+                        if success:
+                            display.show_completion(True, "Workflow completed successfully!")
+                        else:
+                            display.show_completion(False, "Workflow did not complete successfully")
+                else:
                     result = await runner.resume(
                         human_response=human_response,
-                        progress_callback=callback,
+                        config=resume_config,
                     )
 
-                    success = self._check_workflow_success(result)
-                    if success:
-                        display.show_completion(True, "Workflow completed successfully!")
-                    else:
-                        display.show_completion(False, "Workflow did not complete successfully")
-            else:
-                result = await runner.resume(human_response=human_response)
-
-            if self._check_workflow_success(result):
-                self.logger.banner("Workflow Complete!")
-                return {
-                    "success": True,
-                    "mode": "langgraph",
-                    "results": result,
-                }
-            else:
-                return {
-                    "success": False,
-                    "mode": "langgraph",
-                    "results": result,
-                }
+                if self._check_workflow_success(result):
+                    self.logger.banner("Workflow Complete!")
+                    return {
+                        "success": True,
+                        "mode": "langgraph",
+                        "results": result,
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "mode": "langgraph",
+                        "results": result,
+                    }
 
         except Exception as e:
             self.logger.error(f"LangGraph resume failed: {e}")
@@ -533,29 +609,28 @@ class Orchestrator:
         """
         from .langgraph import WorkflowRunner
 
-        runner = WorkflowRunner(self.project_dir)
+        async with WorkflowRunner(self.project_dir) as runner:
+            state = await runner.get_state()
+            if not state:
+                return {
+                    "mode": "langgraph",
+                    "status": "not_started",
+                    "message": "No checkpoint found",
+                }
 
-        state = await runner.get_state()
-        if not state:
+            pending = await runner.get_pending_interrupt_async()
+
             return {
                 "mode": "langgraph",
-                "status": "not_started",
-                "message": "No checkpoint found",
+                "status": "paused" if pending else "in_progress",
+                "project": state.get("project_name"),
+                "current_phase": state.get("current_phase"),
+                "phase_status": {
+                    k: v.status.value if hasattr(v, "status") else str(v)
+                    for k, v in state.get("phase_status", {}).items()
+                },
+                "pending_interrupt": pending,
             }
-
-        pending = runner.get_pending_interrupt()
-
-        return {
-            "mode": "langgraph",
-            "status": "paused" if pending else "in_progress",
-            "project": state.get("project_name"),
-            "current_phase": state.get("current_phase"),
-            "phase_status": {
-                k: v.status.value if hasattr(v, "status") else str(v)
-                for k, v in state.get("phase_status", {}).items()
-            },
-            "pending_interrupt": pending,
-        }
 
     def _print_progress(self, phase_num: int, phase_name: str, status: str) -> None:
         """Print progress indicator.
@@ -687,6 +762,11 @@ Examples:
         "--skip-validation",
         action="store_true",
         help="Skip validation phase",
+    )
+    parser.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Run fully autonomously without human consultation (default: interactive mode)",
     )
     parser.add_argument(
         "--no-commit",
@@ -1025,12 +1105,12 @@ Examples:
 
     if args.resume:
         if use_langgraph:
-            result = asyncio.run(orchestrator.resume_langgraph())
+            result = asyncio.run(orchestrator.resume_langgraph(autonomous=args.autonomous))
         else:
             result = orchestrator.resume()
     elif args.start or args.phase:
         if use_langgraph:
-            result = asyncio.run(orchestrator.run_langgraph())
+            result = asyncio.run(orchestrator.run_langgraph(autonomous=args.autonomous))
         else:
             start = args.phase or 1
             result = orchestrator.run(

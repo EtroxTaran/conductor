@@ -198,6 +198,7 @@ python -m orchestrator --project-path /path/to/project --status
 | `--start` | Start workflow | `--start` |
 | `--resume` | Resume from checkpoint | `--resume` |
 | `--status` | Show workflow status | `--status` |
+| `--autonomous` | Run fully autonomously (no human input) | `--autonomous` |
 | `--use-langgraph` | Use LangGraph mode | `--use-langgraph` |
 | `--health` | Health check | `--health` |
 | `--reset` | Reset workflow | `--reset` |
@@ -230,6 +231,12 @@ python -m orchestrator --project-path /path/to/project --status
 # Run with parallel workers (experimental)
 ./scripts/init.sh run <project-name> --parallel 3
 
+# Run fully autonomously (no human consultation)
+./scripts/init.sh run <project-name> --autonomous
+
+# Combine flags
+./scripts/init.sh run <project-name> --autonomous --parallel 3
+
 # Check status
 ./scripts/init.sh status <project-name>
 
@@ -242,6 +249,7 @@ python -m orchestrator --project-path /path/to/project --status
 |------|---------|---------|
 | `--path` | External project path | `run --path ~/repos/app` |
 | `--parallel` | Parallel workers count | `run my-app --parallel 3` |
+| `--autonomous` | Run without human consultation | `run my-app --autonomous` |
 
 ### call-cursor.sh
 ```bash

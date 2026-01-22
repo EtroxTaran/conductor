@@ -48,6 +48,8 @@ from .config import (
     get_config,
     set_config,
     is_surrealdb_enabled,
+    require_db,
+    DatabaseRequiredError,
 )
 
 from .connection import (
@@ -88,6 +90,12 @@ from .repositories import (
     get_session_repository,
     BudgetRepository,
     get_budget_repository,
+    PhaseOutputRepository,
+    get_phase_output_repository,
+    OutputType,
+    LogsRepository,
+    get_logs_repository,
+    LogType,
 )
 
 __all__ = [
@@ -96,6 +104,8 @@ __all__ = [
     "get_config",
     "set_config",
     "is_surrealdb_enabled",
+    "require_db",
+    "DatabaseRequiredError",
     # Connection
     "Connection",
     "ConnectionPool",
@@ -128,4 +138,10 @@ __all__ = [
     "get_session_repository",
     "BudgetRepository",
     "get_budget_repository",
+    "PhaseOutputRepository",
+    "get_phase_output_repository",
+    "OutputType",
+    "LogsRepository",
+    "get_logs_repository",
+    "LogType",
 ]

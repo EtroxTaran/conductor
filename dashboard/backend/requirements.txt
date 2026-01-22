@@ -1,0 +1,25 @@
+# Conductor Dashboard Backend Dependencies
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Settings management
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# WebSocket support (included in uvicorn[standard])
+websockets>=12.0
+
+# Async support
+anyio>=4.2.0
+
+# HTTP client (for internal requests if needed)
+httpx>=0.26.0
+
+# JSON handling
+orjson>=3.9.10
+
+# Date handling
+python-dateutil>=2.8.2

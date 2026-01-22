@@ -164,6 +164,30 @@ def is_surrealdb_enabled() -> bool:
     return bool(url.strip())
 
 
+class DatabaseRequiredError(Exception):
+    """Raised when SurrealDB is required but not configured."""
+
+    pass
+
+
+def require_db() -> None:
+    """Ensure SurrealDB is configured. Raises if not.
+
+    Raises:
+        DatabaseRequiredError: If SURREAL_URL is not set
+
+    Usage:
+        from orchestrator.db.config import require_db
+        require_db()  # Raises if DB not configured
+    """
+    if not is_surrealdb_enabled():
+        raise DatabaseRequiredError(
+            "SurrealDB is required but SURREAL_URL environment variable is not set.\n"
+            "Set SURREAL_URL to your SurrealDB WebSocket endpoint (e.g., wss://db.example.com/rpc).\n"
+            "If there's no internet, AI agents can't work anyway - SurrealDB is required."
+        )
+
+
 def get_project_database(project_name: Optional[str] = None) -> str:
     """Get the database name for a project.
 

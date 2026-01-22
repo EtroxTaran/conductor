@@ -2,6 +2,7 @@
 
 Pauses workflow for human approval at configured phases.
 Uses LangGraph's interrupt() for human-in-the-loop.
+In autonomous mode, auto-approves and continues without human input.
 """
 
 import json
@@ -51,6 +52,28 @@ async def approval_gate_node(state: WorkflowState) -> dict[str, Any]:
 
     if current_phase not in config.workflow.approval_phases:
         logger.info(f"Phase {current_phase} not in approval_phases, skipping")
+        return {
+            "updated_at": datetime.now().isoformat(),
+            "next_decision": "continue",
+        }
+
+    # Check execution mode - auto-approve in autonomous mode
+    execution_mode = state.get("execution_mode", "hitl")
+    if execution_mode == "afk":
+        logger.info(f"[AUTONOMOUS] Auto-approving phase {current_phase} (autonomous mode)")
+
+        # Save auto-approval record for audit trail
+        approval_dir = project_dir / ".workflow" / "phases" / "approvals"
+        approval_dir.mkdir(parents=True, exist_ok=True)
+
+        response_file = approval_dir / f"phase_{current_phase}_response.json"
+        response_file.write_text(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "action": "approve",
+            "feedback": "Auto-approved in autonomous mode",
+            "autonomous": True,
+        }, indent=2))
+
         return {
             "updated_at": datetime.now().isoformat(),
             "next_decision": "continue",

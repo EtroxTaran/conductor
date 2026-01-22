@@ -187,6 +187,7 @@ run_workflow() {
     local name="$1"
     local project_path="$2"
     local parallel_workers="$3"
+    local autonomous="$4"
 
     # Build the command arguments
     local cmd_args=""
@@ -218,6 +219,12 @@ run_workflow() {
         export PARALLEL_WORKERS="$parallel_workers"
     fi
 
+    # Add autonomous mode if specified
+    if [ "$autonomous" = "true" ]; then
+        echo -e "${BLUE}Autonomous mode: enabled (no human consultation)${NC}"
+        cmd_args="$cmd_args --autonomous"
+    fi
+
     "$ROOT_DIR/.venv/bin/python" -m orchestrator $cmd_args --use-langgraph --start
 }
 
@@ -242,11 +249,14 @@ Commands:
   run <name>      Run workflow for a project
   run --path <path>        Run workflow for external project
   run <name> --parallel N  Run with N parallel workers
+  run <name> --autonomous  Run fully autonomously without human consultation
   status <name>   Show workflow status for a project
 
 Options:
-  --path <path>   Use external project directory instead of projects/<name>
-  --parallel <N>  Enable parallel worker execution with N workers (experimental)
+  --path <path>     Use external project directory instead of projects/<name>
+  --parallel <N>    Enable parallel worker execution with N workers (experimental)
+  --autonomous      Run fully autonomously without pausing for human input
+                    (default: interactive mode with human consultation)
 
 Workflow:
   1. Initialize a project:    ./scripts/init.sh init my-project
@@ -260,8 +270,10 @@ Examples:
   ./scripts/init.sh init my-api
   ./scripts/init.sh list
   ./scripts/init.sh run my-api
+  ./scripts/init.sh run my-api --autonomous
   ./scripts/init.sh run --path ~/repos/my-project
   ./scripts/init.sh run my-api --parallel 3
+  ./scripts/init.sh run my-api --autonomous --parallel 3
   ./scripts/init.sh status my-api
 "
 }
@@ -292,6 +304,7 @@ case "$COMMAND" in
         PROJECT_NAME=""
         PROJECT_PATH=""
         PARALLEL_WORKERS=""
+        AUTONOMOUS="false"
 
         # Parse run arguments
         while [ $# -gt 0 ]; do
@@ -303,6 +316,9 @@ case "$COMMAND" in
                 --parallel)
                     shift
                     PARALLEL_WORKERS="$1"
+                    ;;
+                --autonomous)
+                    AUTONOMOUS="true"
                     ;;
                 -*)
                     echo -e "${RED}Error: Unknown option: $1${NC}"
@@ -326,7 +342,7 @@ case "$COMMAND" in
         fi
 
         check_prereqs
-        run_workflow "$PROJECT_NAME" "$PROJECT_PATH" "$PARALLEL_WORKERS"
+        run_workflow "$PROJECT_NAME" "$PROJECT_PATH" "$PARALLEL_WORKERS" "$AUTONOMOUS"
         ;;
     status)
         shift

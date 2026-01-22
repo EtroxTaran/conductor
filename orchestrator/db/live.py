@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Optional
 
-from .connection import get_connection, Connection
+from .connection import get_pool, Connection, ConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -84,18 +84,55 @@ class LiveQueryManager:
         """
         self.project_name = project_name
         self._subscriptions: dict[str, tuple[str, EventCallback | AsyncEventCallback]] = {}
+        self._pool: Optional[ConnectionPool] = None
         self._connection: Optional[Connection] = None
         self._running = False
         self._lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> Connection:
-        """Ensure we have an active connection."""
+        """Ensure we have an active connection.
+
+        Unlike context-managed connections, this keeps the connection
+        alive for the lifetime of the LiveQueryManager to support
+        persistent live query subscriptions.
+        """
         async with self._lock:
+            # Initialize pool if needed
+            if self._pool is None:
+                self._pool = await get_pool(self.project_name)
+
+            # Get or reconnect connection
             if self._connection is None or not self._connection.is_connected:
-                # Get a new connection
-                async with get_connection(self.project_name) as conn:
-                    self._connection = conn
+                # Acquire connection from pool's internal queue
+                # Note: We bypass acquire() context manager to keep connection alive
+                if not self._pool._initialized:
+                    await self._pool.initialize()
+                self._connection = await self._pool._available.get()
+                self._pool._stats.active_connections += 1
+
+                # Ensure it's connected
+                if not self._connection.is_connected:
+                    await self._connection.connect()
+
             return self._connection
+
+    async def close(self) -> None:
+        """Release connection back to pool and clean up subscriptions."""
+        async with self._lock:
+            # Unsubscribe all first
+            for sub_id in list(self._subscriptions.keys()):
+                live_id, _ = self._subscriptions.pop(sub_id)
+                if self._connection and self._connection.is_connected:
+                    try:
+                        await self._connection.kill(live_id)
+                    except Exception as e:
+                        logger.warning(f"Error killing live query {live_id}: {e}")
+
+            # Return connection to pool
+            if self._connection and self._pool:
+                self._pool._stats.active_connections -= 1
+                await self._pool._available.put(self._connection)
+                self._connection = None
 
     async def subscribe(
         self,
@@ -290,8 +327,8 @@ class WorkflowMonitor:
                 logger.error(f"Audit entry handler error: {e}")
 
     async def stop(self) -> None:
-        """Stop all monitoring subscriptions."""
-        await self._manager.unsubscribe_all()
+        """Stop all monitoring subscriptions and release connection."""
+        await self._manager.close()
         for handlers in self._handlers.values():
             handlers.clear()
 

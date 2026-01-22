@@ -39,14 +39,31 @@ class ConflictResolver:
 
     # Domain-specific authority override weights
     # If an issue is flagged in this domain, that agent's voice carries this weight
+    # NOTE: Only actual vulnerabilities trigger veto, not process/documentation gaps
     DOMAIN_AUTHORITY = {
-        "security": "cursor",      # Cursor is the security authority
         "vulnerability": "cursor",
         "injection": "cursor",     # SQL/Command injection
-        "architecture": "gemini",  # Gemini is the architecture authority
-        "pattern": "gemini",
-        "structure": "gemini",
+        "xss": "cursor",           # Cross-site scripting
+        "csrf": "cursor",          # Cross-site request forgery
+        "rce": "cursor",           # Remote code execution
+        "authentication bypass": "cursor",
+        "authorization bypass": "cursor",
+        "privilege escalation": "cursor",
     }
+
+    # Keywords that indicate this is a process gap, not an actual vulnerability
+    # These should NOT trigger the authority veto
+    PROCESS_GAP_INDICATORS = [
+        "no security requirements",
+        "not specified",
+        "missing",
+        "lacks",
+        "should include",
+        "should add",
+        "no mention",
+        "not defined",
+        "unclear",
+    ]
 
     def __init__(self, weights: Optional[Dict[str, float]] = None):
         self.weights = weights or self.DEFAULT_WEIGHTS
@@ -104,16 +121,32 @@ class ConflictResolver:
         weighted_score = (s1 * w1) + (s2 * w2)
 
         # 4. Determine Outcome
-        MIN_SCORE = 7.0
-        
-        # If blockers exist, reject regardless of score
-        if all_blockers:
+        # Phase 2 threshold is 6.0, Phase 4 threshold is 7.0
+        # We use 6.0 here as validation happens in Phase 2
+        MIN_SCORE = 6.0
+
+        # Filter out process gaps from blocking issues
+        # Process gaps are important feedback but shouldn't block validation
+        real_blockers = [
+            b for b in all_blockers
+            if not self._is_process_gap(str(b["issue"]).lower())
+        ]
+
+        # If real blockers exist (actual vulnerabilities), reject regardless of score
+        if real_blockers:
             return ResolutionResult(
                 approved=False,
                 final_score=weighted_score,
-                decision_reason=f"Rejected due to {len(all_blockers)} blocking issues",
-                blocking_issues=all_blockers,
+                decision_reason=f"Rejected due to {len(real_blockers)} blocking issues (actual vulnerabilities)",
+                blocking_issues=real_blockers,
                 action="reject"
+            )
+
+        # Log process gap warnings (they're feedback, not blockers)
+        if all_blockers and not real_blockers:
+            logger.warning(
+                f"Filtered {len(all_blockers)} process gaps from blocking issues "
+                "(these are feedback items, not actual vulnerabilities)"
             )
 
         # If substantial disagreement (variance > 3.0), escalate
@@ -166,14 +199,28 @@ class ConflictResolver:
         )
 
     def _check_authority_veto(self, blockers: List[Dict[str, Any]]) -> Optional[str]:
-        """Check if any blocker is from the authority for that domain."""
+        """Check if any blocker is from the authority for that domain.
+
+        Only triggers veto for actual vulnerabilities, not process/documentation gaps.
+        """
         for item in blockers:
             agent = item["agent"]
             issue_text = str(item["issue"]).lower()
-            
+
+            # Skip if this looks like a process gap rather than actual vulnerability
+            if self._is_process_gap(issue_text):
+                continue
+
             # Check keywords against domains
             for domain, authority in self.DOMAIN_AUTHORITY.items():
                 if domain in issue_text and agent == authority:
                     return f"{agent.title()} flagged {domain.upper()} issue: {item['issue']}"
-        
+
         return None
+
+    def _is_process_gap(self, issue_text: str) -> bool:
+        """Check if issue text indicates a process gap rather than actual vulnerability."""
+        for indicator in self.PROCESS_GAP_INDICATORS:
+            if indicator in issue_text:
+                return True
+        return False

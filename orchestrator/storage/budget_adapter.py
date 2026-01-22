@@ -1,7 +1,7 @@
 """Budget storage adapter.
 
-Provides unified interface for budget tracking with automatic backend selection.
-Uses SurrealDB when enabled, falls back to file-based JSON otherwise.
+Provides unified interface for budget tracking using SurrealDB.
+This is the DB-only version - no file fallback.
 """
 
 import logging
@@ -15,16 +15,16 @@ from .base import BudgetRecordData, BudgetStorageProtocol, BudgetSummaryData
 logger = logging.getLogger(__name__)
 
 
+# Default budget configuration (used since file backend is removed)
+DEFAULT_PROJECT_BUDGET_USD = 50.0
+DEFAULT_TASK_BUDGET_USD = 5.0
+DEFAULT_INVOCATION_BUDGET_USD = 1.0
+
+
 class BudgetStorageAdapter(BudgetStorageProtocol):
     """Storage adapter for budget tracking.
 
-    Automatically selects between file-based and SurrealDB backends
-    based on configuration. Provides a unified interface for budget
-    operations.
-
-    Note: This adapter focuses on the storage operations. For budget
-    enforcement logic (can_spend checks, limits), use BudgetManager
-    which wraps this adapter.
+    Uses SurrealDB as the only storage backend. No file fallback.
 
     Usage:
         adapter = BudgetStorageAdapter(project_dir)
@@ -36,7 +36,7 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         spent = adapter.get_task_spent("T1")
 
         # Check remaining budget
-        remaining = adapter.get_task_remaining("T1", budget_limit=5.0)
+        remaining = adapter.get_task_remaining("T1")
 
         # Get summary
         summary = adapter.get_summary()
@@ -46,35 +46,25 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         self,
         project_dir: Path,
         project_name: Optional[str] = None,
+        project_budget_usd: float = DEFAULT_PROJECT_BUDGET_USD,
+        task_budget_usd: float = DEFAULT_TASK_BUDGET_USD,
+        invocation_budget_usd: float = DEFAULT_INVOCATION_BUDGET_USD,
     ):
         """Initialize budget storage adapter.
 
         Args:
             project_dir: Project directory
             project_name: Project name (defaults to directory name)
+            project_budget_usd: Total project budget limit
+            task_budget_usd: Per-task budget limit
+            invocation_budget_usd: Per-invocation budget limit
         """
         self.project_dir = Path(project_dir)
         self.project_name = project_name or self.project_dir.name
-
-        # Lazy-initialized backends
-        self._file_backend: Optional[Any] = None
+        self.project_budget_usd = project_budget_usd
+        self.task_budget_usd = task_budget_usd
+        self.invocation_budget_usd = invocation_budget_usd
         self._db_backend: Optional[Any] = None
-
-    @property
-    def _use_db(self) -> bool:
-        """Check if SurrealDB should be used."""
-        try:
-            from orchestrator.db import is_surrealdb_enabled
-            return is_surrealdb_enabled()
-        except ImportError:
-            return False
-
-    def _get_file_backend(self) -> Any:
-        """Get or create file backend."""
-        if self._file_backend is None:
-            from orchestrator.agents.budget import BudgetManager
-            self._file_backend = BudgetManager(self.project_dir)
-        return self._file_backend
 
     def _get_db_backend(self) -> Any:
         """Get or create database backend."""
@@ -102,32 +92,16 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
             tokens_output: Output token count
             model: Model used
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                run_async(
-                    db.record_spend(
-                        agent=agent,
-                        cost_usd=cost_usd,
-                        task_id=task_id,
-                        tokens_input=tokens_input,
-                        tokens_output=tokens_output,
-                        model=model,
-                    )
-                )
-                return
-            except Exception as e:
-                logger.warning(f"Failed to record DB spend, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        file_backend.record_spend(
-            task_id=task_id,
-            agent=agent,
-            amount_usd=cost_usd,
-            model=model,
-            prompt_tokens=tokens_input,
-            completion_tokens=tokens_output,
+        db = self._get_db_backend()
+        run_async(
+            db.record_spend(
+                agent=agent,
+                cost_usd=cost_usd,
+                task_id=task_id,
+                tokens_input=tokens_input,
+                tokens_output=tokens_output,
+                model=model,
+            )
         )
 
     def get_task_spent(self, task_id: str) -> float:
@@ -139,16 +113,8 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Returns:
             Total spent in USD
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                return run_async(db.get_task_cost(task_id))
-            except Exception as e:
-                logger.warning(f"Failed to get DB task cost, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend.get_task_spent(task_id)
+        db = self._get_db_backend()
+        return run_async(db.get_task_cost(task_id))
 
     def get_task_remaining(self, task_id: str) -> Optional[float]:
         """Get remaining budget for a task.
@@ -157,20 +123,11 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
             task_id: Task identifier
 
         Returns:
-            Remaining budget in USD, or None if unlimited
+            Remaining budget in USD
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                # DB backend doesn't track task budgets the same way
-                # Return None to indicate unlimited
-                return None
-            except Exception as e:
-                logger.warning(f"Failed to get DB remaining, falling back to file: {e}")
-
-        # File backend has task budget tracking
-        file_backend = self._get_file_backend()
-        return file_backend.get_task_remaining(task_id)
+        spent = self.get_task_spent(task_id)
+        remaining = self.task_budget_usd - spent
+        return max(0.0, remaining)
 
     def can_spend(
         self,
@@ -183,24 +140,25 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Args:
             task_id: Task identifier
             amount_usd: Amount to spend
-            raise_on_exceeded: Whether to raise BudgetExceeded if over limit
+            raise_on_exceeded: Whether to raise if over limit
 
         Returns:
             True if within budget
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                task_cost = run_async(db.get_task_cost(task_id))
-                # Use a default budget limit if not tracked in DB
-                # This is a simplification - could be enhanced
-                return True  # DB doesn't enforce limits by default
-            except Exception as e:
-                logger.warning(f"Failed to check DB budget, falling back to file: {e}")
+        remaining = self.get_task_remaining(task_id)
+        if remaining is None:
+            return True
 
-        # File backend has full budget enforcement logic
-        file_backend = self._get_file_backend()
-        return file_backend.can_spend(task_id, amount_usd, raise_on_exceeded)
+        can_afford = amount_usd <= remaining
+
+        if not can_afford and raise_on_exceeded:
+            from orchestrator.agents.budget import BudgetExceeded
+            raise BudgetExceeded(
+                f"Task {task_id} budget exceeded. "
+                f"Requested: ${amount_usd:.2f}, Remaining: ${remaining:.2f}"
+            )
+
+        return can_afford
 
     def get_invocation_budget(self, task_id: str, default: float = 1.0) -> float:
         """Get the per-invocation budget for a task.
@@ -214,15 +172,12 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Returns:
             Per-invocation budget in USD
         """
-        # For now, we use a simple approach
-        # Could be enhanced to check project config or task complexity
-        if self._use_db:
-            # DB backend doesn't have invocation budget concept
-            return default
-
-        # File backend has invocation budget config
-        file_backend = self._get_file_backend()
-        return file_backend.get_invocation_budget(task_id)
+        # Check remaining budget
+        remaining = self.get_task_remaining(task_id)
+        if remaining is not None:
+            # Don't exceed remaining budget
+            return min(self.invocation_budget_usd, remaining)
+        return self.invocation_budget_usd
 
     def get_summary(
         self,
@@ -238,45 +193,16 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Returns:
             BudgetSummaryData summary
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                summary = run_async(db.get_summary(since=since, until=until))
-                return BudgetSummaryData(
-                    total_cost_usd=summary.total_cost_usd,
-                    total_tokens_input=summary.total_tokens_input,
-                    total_tokens_output=summary.total_tokens_output,
-                    record_count=summary.record_count,
-                    by_agent=summary.by_agent,
-                    by_task=summary.by_task,
-                    by_model=summary.by_model,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to get DB summary, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        status = file_backend.get_budget_status()
-        task_report = file_backend.get_task_spending_report()
-
-        # Build by_agent from records
-        by_agent: dict[str, float] = {}
-        by_model: dict[str, float] = {}
-        for record in file_backend._state.records:
-            agent = record.get("agent", "unknown")
-            by_agent[agent] = by_agent.get(agent, 0) + record.get("amount_usd", 0)
-            model = record.get("model")
-            if model:
-                by_model[model] = by_model.get(model, 0) + record.get("amount_usd", 0)
-
+        db = self._get_db_backend()
+        summary = run_async(db.get_summary(since=since, until=until))
         return BudgetSummaryData(
-            total_cost_usd=status.get("total_spent_usd", 0.0),
-            total_tokens_input=0,  # File backend doesn't aggregate tokens
-            total_tokens_output=0,
-            record_count=status.get("record_count", 0),
-            by_agent=by_agent,
-            by_task=status.get("task_spent", {}),
-            by_model=by_model,
+            total_cost_usd=summary.total_cost_usd,
+            total_tokens_input=summary.total_tokens_input,
+            total_tokens_output=summary.total_tokens_output,
+            record_count=summary.record_count,
+            by_agent=summary.by_agent,
+            by_task=summary.by_task,
+            by_model=summary.by_model,
         )
 
     def get_total_spent(
@@ -291,16 +217,8 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Returns:
             Total spent in USD
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                return run_async(db.get_total_cost(since=since))
-            except Exception as e:
-                logger.warning(f"Failed to get DB total, falling back to file: {e}")
-
-        # File backend
-        file_backend = self._get_file_backend()
-        return file_backend._state.total_spent_usd
+        db = self._get_db_backend()
+        return run_async(db.get_total_cost(since=since))
 
     def get_daily_costs(self, days: int = 7) -> list[dict]:
         """Get daily cost breakdown.
@@ -311,65 +229,60 @@ class BudgetStorageAdapter(BudgetStorageProtocol):
         Returns:
             List of daily cost records
         """
-        if self._use_db:
-            try:
-                db = self._get_db_backend()
-                return run_async(db.get_daily_costs(days))
-            except Exception as e:
-                logger.warning(f"Failed to get DB daily costs, falling back to file: {e}")
+        db = self._get_db_backend()
+        return run_async(db.get_daily_costs(days))
 
-        # File backend - aggregate from records
-        file_backend = self._get_file_backend()
-        daily: dict[str, dict] = {}
+    def get_project_remaining(self) -> float:
+        """Get remaining project budget.
 
-        for record in file_backend._state.records:
-            timestamp = record.get("timestamp", "")
-            if not timestamp:
-                continue
-
-            # Extract date
-            date = timestamp[:10]  # YYYY-MM-DD
-            if date not in daily:
-                daily[date] = {"date": date, "cost_usd": 0.0, "invocations": 0}
-
-            daily[date]["cost_usd"] += record.get("amount_usd", 0)
-            daily[date]["invocations"] += 1
-
-        # Sort by date
-        return sorted(daily.values(), key=lambda x: x["date"])
-
-    @property
-    def config(self):
-        """Get budget configuration (delegates to file backend).
-
-        Note: SurrealDB backend doesn't have the same config concept,
-        so this always returns the file backend's config.
+        Returns:
+            Remaining budget in USD
         """
-        file_backend = self._get_file_backend()
-        return file_backend.config
+        total_spent = self.get_total_spent()
+        return max(0.0, self.project_budget_usd - total_spent)
 
     def enforce_budget(
         self,
         task_id: str,
         amount_usd: float,
         soft_limit_percent: float = 90.0,
-    ):
+    ) -> dict[str, Any]:
         """Check budget with detailed result for workflow decisions.
-
-        Delegates to file backend for full enforcement logic.
 
         Args:
             task_id: Task identifier
             amount_usd: Amount to spend
-            soft_limit_percent: Percentage at which to escalate
+            soft_limit_percent: Percentage at which to warn
 
         Returns:
-            BudgetEnforcementResult with detailed status
+            Dict with can_proceed, warning, remaining, etc.
         """
-        # Use file backend for enforcement logic
-        # DB backend doesn't have the same enforcement concept
-        file_backend = self._get_file_backend()
-        return file_backend.enforce_budget(task_id, amount_usd, soft_limit_percent)
+        task_spent = self.get_task_spent(task_id)
+        task_remaining = self.task_budget_usd - task_spent
+        project_remaining = self.get_project_remaining()
+
+        # Calculate usage percentage
+        task_usage_pct = (task_spent / self.task_budget_usd) * 100 if self.task_budget_usd > 0 else 0
+
+        # Check if we can proceed
+        can_proceed = amount_usd <= task_remaining and amount_usd <= project_remaining
+
+        # Check for soft limit warning
+        warning = None
+        if task_usage_pct >= soft_limit_percent:
+            warning = f"Task {task_id} is at {task_usage_pct:.1f}% of budget"
+
+        return {
+            "can_proceed": can_proceed,
+            "warning": warning,
+            "task_spent": task_spent,
+            "task_remaining": task_remaining,
+            "task_budget": self.task_budget_usd,
+            "task_usage_percent": task_usage_pct,
+            "project_remaining": project_remaining,
+            "project_budget": self.project_budget_usd,
+            "requested_amount": amount_usd,
+        }
 
 
 # Cache of adapters per project
