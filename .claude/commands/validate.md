@@ -5,7 +5,7 @@ allowed-tools: ["Bash", "Read", "Write", "Edit"]
 
 # Plan Validation (Phase 2)
 
-Run Cursor and Gemini to validate the current plan.
+Run Cursor and Gemini in parallel to validate the implementation plan.
 
 ## Prerequisites
 
@@ -14,102 +14,109 @@ Run Cursor and Gemini to validate the current plan.
 
 ## Instructions
 
-### 1. Read the Plan
+### 1. Prepare
 
-Read `.workflow/phases/planning/plan.json`
-
-### 2. Create Validation Prompts
-
-Create prompts for each agent:
-
-**Cursor Prompt** (`.workflow/phases/validation/cursor-prompt.md`):
-```markdown
-# Plan Validation Request
-
-Review the following implementation plan for code quality, security, and maintainability.
-
-## Plan
-{plan_json}
-
-## Your Focus
-- Security vulnerabilities
-- Code quality issues
-- Testing coverage
-- Maintainability concerns
-
-## Output Format
-Return JSON with:
-{
-  "reviewer": "cursor",
-  "overall_assessment": "approve|needs_changes|reject",
-  "score": 1-10,
-  "concerns": [{"area": "", "severity": "high|medium|low", "description": ""}],
-  "strengths": [],
-  "blocking_issues": []
-}
+```bash
+mkdir -p .workflow/phases/validation
 ```
 
-**Gemini Prompt** (`.workflow/phases/validation/gemini-prompt.md`):
-```markdown
-# Architecture Validation Request
+### 2. Read Plan
 
-Review the following implementation plan for architecture and scalability.
-
-## Plan
-{plan_json}
-
-## Your Focus
-- Architecture patterns
-- Scalability concerns
-- Design principles
-- Technical debt risks
-
-## Output Format
-Return JSON with:
-{
-  "reviewer": "gemini",
-  "overall_assessment": "approve|needs_changes|reject",
-  "score": 1-10,
-  "architecture_review": {"concerns": [], "patterns_identified": []},
-  "blocking_issues": []
-}
+```
+Read: .workflow/phases/planning/plan.json
 ```
 
 ### 3. Run Agents in Parallel
 
+Execute BOTH commands simultaneously:
+
+**Cursor (Security Focus)**:
 ```bash
-bash scripts/call-cursor.sh .workflow/phases/validation/cursor-prompt.md .workflow/phases/validation/cursor-feedback.json &
-bash scripts/call-gemini.sh .workflow/phases/validation/gemini-prompt.md .workflow/phases/validation/gemini-feedback.json &
-wait
+cursor-agent --print --output-format json "
+# Plan Validation - Security & Code Quality
+
+Review the plan at .workflow/phases/planning/plan.json for:
+1. Security vulnerabilities in proposed changes
+2. Code quality concerns
+3. Testing coverage adequacy
+4. OWASP Top 10 risks
+
+Return JSON:
+{
+  \"agent\": \"cursor\",
+  \"approved\": true|false,
+  \"score\": 1-10,
+  \"assessment\": \"summary\",
+  \"concerns\": [{\"area\": \"\", \"severity\": \"high|medium|low\", \"description\": \"\"}],
+  \"blocking_issues\": []
+}
+" > .workflow/phases/validation/cursor-feedback.json
+```
+
+**Gemini (Architecture Focus)**:
+```bash
+gemini --yolo "
+# Plan Validation - Architecture & Scalability
+
+Review the plan at .workflow/phases/planning/plan.json for:
+1. Architecture patterns and design
+2. Scalability considerations
+3. Technical debt risks
+4. Maintainability
+
+Return JSON in code block:
+\`\`\`json
+{
+  \"agent\": \"gemini\",
+  \"approved\": true|false,
+  \"score\": 1-10,
+  \"assessment\": \"summary\",
+  \"concerns\": [{\"area\": \"\", \"severity\": \"high|medium|low\", \"description\": \"\"}],
+  \"blocking_issues\": []
+}
+\`\`\`
+" > .workflow/phases/validation/gemini-feedback.json
 ```
 
 ### 4. Evaluate Results
 
-Read both feedback files and evaluate using the approval policy:
+Read both feedback files and check:
 
-**NO_BLOCKERS Policy (Phase 2 Default)**:
-- Approve if no blocking issues AND combined score >= 6.0
-- Concerns are logged but don't block
+| Criterion | Requirement |
+|-----------|-------------|
+| Cursor Score | >= 6.0 |
+| Gemini Score | >= 6.0 |
+| Blocking Issues | None |
 
-### 5. Generate Consolidated Feedback
+### 5. Handle Conflicts
 
-Create `.workflow/phases/validation/consolidated-feedback.json` with:
-- Both feedback summaries
-- Overall recommendation: proceed | revise_plan | review_concerns
-- All blocking issues
+If agents disagree, use `/resolve-conflict`:
+- Security issues: Cursor weight 0.8
+- Architecture issues: Gemini weight 0.7
 
-### 6. Handle Conflicts
+### 6. Update State
 
-If agents disagree (approval mismatch):
-- Use weighted resolution: Security -> Cursor (0.8), Architecture -> Gemini (0.7)
-- Log resolution in output
+**If Approved**:
+```json
+{
+  "current_phase": 3,
+  "phase_status": { "validation": "completed" },
+  "validation_feedback": { "cursor": {...}, "gemini": {...} }
+}
+```
 
-### 7. Update State
+**If Not Approved**:
+Return to Phase 1 with feedback to address concerns.
 
-If approved:
-- Update `.workflow/state.json` to phase 3
-- Continue to implementation
+## Approval Thresholds
 
-If not approved:
-- Increment iteration_count
-- Return to phase 1 with feedback
+- Combined score >= 6.0
+- No blocking issues from either agent
+- Use `/resolve-conflict` for disagreements
+
+## Related Skills
+
+- `/plan-feature` - Previous phase
+- `/call-cursor` - Cursor details
+- `/call-gemini` - Gemini details
+- `/resolve-conflict` - Conflict resolution

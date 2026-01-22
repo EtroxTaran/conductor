@@ -1,135 +1,131 @@
 ---
-description: Run Phase 4 verification on implemented code
+description: Run Phase 4 verification with Cursor and Gemini
 allowed-tools: ["Bash", "Read", "Write", "Edit"]
 ---
 
-# Implementation Verification (Phase 4)
+# Code Verification (Phase 4)
 
-Run Cursor and Gemini to verify the implemented code.
+Run Cursor and Gemini in parallel to verify the implementation.
 
 ## Prerequisites
 
 - Phase 3 (Implementation) must be complete
-- Implementation results must exist
-- Tests must be passing
+- All tasks marked as "completed"
+- Tests passing
 
 ## Instructions
 
-### 1. Gather Context
-
-Read these files:
-- `.workflow/phases/implementation/implementation-results.json`
-- `.workflow/phases/planning/plan.json`
-- Get list of files changed/created
-
-### 2. Create Verification Prompts
-
-**Cursor Review Prompt** (`.workflow/phases/verification/cursor-prompt.md`):
-```markdown
-# Code Review Request
-
-Review the following implementation for bugs, security, and code quality.
-
-## Files Changed
-{files_list}
-
-## Test Results
-{test_summary}
-
-## Your Focus
-- Bug detection
-- Security vulnerabilities
-- Code style and best practices
-- Test coverage
-
-## Output Format
-Return JSON with:
-{
-  "reviewer": "cursor",
-  "approved": true|false,
-  "overall_code_quality": 1-10,
-  "files_reviewed": [
-    {"file": "", "issues": [{"type": "", "severity": "error|warning", "description": ""}]}
-  ],
-  "blocking_issues": []
-}
-```
-
-**Gemini Review Prompt** (`.workflow/phases/verification/gemini-prompt.md`):
-```markdown
-# Architecture Review Request
-
-Review the implementation against the original plan.
-
-## Plan
-{plan_json}
-
-## Files Changed
-{files_list}
-
-## Your Focus
-- Plan conformance
-- Architecture integrity
-- Modularity and coupling
-- Technical debt
-
-## Output Format
-Return JSON with:
-{
-  "reviewer": "gemini",
-  "approved": true|false,
-  "architecture_assessment": {
-    "modularity_score": 1-10,
-    "conforms_to_plan": true|false
-  },
-  "blocking_issues": [],
-  "technical_debt": {"items": []}
-}
-```
-
-### 3. Run Reviewers in Parallel
+### 1. Prepare
 
 ```bash
-bash scripts/call-cursor.sh .workflow/phases/verification/cursor-prompt.md .workflow/phases/verification/cursor-review.json &
-bash scripts/call-gemini.sh .workflow/phases/verification/gemini-prompt.md .workflow/phases/verification/gemini-review.json &
-wait
+mkdir -p .workflow/phases/verification
+```
+
+### 2. Gather Implementation Info
+
+Read task completion records and list changed files.
+
+### 3. Run Agents in Parallel
+
+Execute BOTH commands simultaneously:
+
+**Cursor (Security Audit)**:
+```bash
+cursor-agent --print --output-format json "
+# Code Review - Security Audit
+
+Review the implemented code for:
+1. OWASP Top 10 vulnerabilities
+2. Injection flaws (SQL, XSS, command)
+3. Authentication/authorization issues
+4. Sensitive data exposure
+5. Input validation
+
+Return JSON:
+{
+  \"agent\": \"cursor\",
+  \"approved\": true|false,
+  \"score\": 1-10,
+  \"assessment\": \"summary\",
+  \"security_issues\": [{\"severity\": \"critical|high|medium|low\", \"file\": \"\", \"line\": 0, \"description\": \"\", \"fix\": \"\"}],
+  \"blocking_issues\": []
+}
+" > .workflow/phases/verification/cursor-review.json
+```
+
+**Gemini (Architecture Review)**:
+```bash
+gemini --yolo "
+# Code Review - Architecture Compliance
+
+Review the implemented code for:
+1. Architecture compliance with plan
+2. Design pattern correctness
+3. Modularity and separation of concerns
+4. Maintainability
+
+Return JSON in code block:
+\`\`\`json
+{
+  \"agent\": \"gemini\",
+  \"approved\": true|false,
+  \"score\": 1-10,
+  \"assessment\": \"summary\",
+  \"architecture_issues\": [{\"file\": \"\", \"concern\": \"\", \"severity\": \"high|medium|low\"}],
+  \"blocking_issues\": []
+}
+\`\`\`
+" > .workflow/phases/verification/gemini-review.json
 ```
 
 ### 4. Evaluate Results
 
-**ALL_MUST_APPROVE Policy (Phase 4 Default)**:
-- BOTH agents must approve
-- Minimum score: 7.0
-- No blocking issues
+**BOTH agents must approve** (Phase 4 is stricter):
 
-### 5. Handle Conflicts
+| Criterion | Requirement |
+|-----------|-------------|
+| Cursor Score | >= 7.0 |
+| Gemini Score | >= 7.0 |
+| Cursor Approved | **Yes** |
+| Gemini Approved | **Yes** |
+| Security Issues | None high/critical |
+| Blocking Issues | None |
 
-Use CONSERVATIVE strategy in Phase 4:
-- For approval mismatch: take the rejection
-- For severity disagreement: take the higher severity
-- This ensures quality before merge
+### 5. Handle Non-Approval
 
-### 6. Generate Merge Status
+**Security Issues**: Return to Phase 3, create fix tasks.
+**Architecture Issues**: Evaluate severity, may need refactoring.
 
-Create `.workflow/phases/verification/ready-to-merge.json`:
+### 6. Update State
+
+**If Approved**:
 ```json
 {
-  "approved": true|false,
-  "cursor_approved": true|false,
-  "gemini_approved": true|false,
-  "combined_score": 8.5,
-  "blocking_issues": [],
-  "timestamp": "ISO-8601"
+  "current_phase": 5,
+  "phase_status": { "verification": "completed" },
+  "verification_feedback": { "cursor": {...}, "gemini": {...} }
 }
 ```
 
-### 7. Update State
+**If Not Approved**:
+```json
+{
+  "current_phase": 3,
+  "phase_status": { "verification": "needs_fixes" },
+  "fix_tasks": [...]
+}
+```
 
-If approved:
-- Update state to phase 5
-- Proceed to completion
+## Approval Thresholds
 
-If not approved:
-- Log blocking issues
-- Return to phase 3 with feedback
-- Increment iteration count
+- BOTH agents must approve
+- Scores >= 7.0 each
+- No blocking issues
+- No high/critical security vulnerabilities
+
+## Related Skills
+
+- `/implement-task` - Previous phase
+- `/call-cursor` - Cursor details
+- `/call-gemini` - Gemini details
+- `/resolve-conflict` - Conflict resolution

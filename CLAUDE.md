@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-22 12:18:05 -->
+<!-- Last synced: 2026-01-22 12:57:24 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -490,34 +490,63 @@ Instead of implementing the entire feature in one shot, the workflow breaks PROD
 
 ## Task Granularity
 
-Tasks are enforced to be small and focused. Large tasks are automatically split to prevent context overload and improve success rates.
+Tasks are enforced to be small and focused using multi-dimensional complexity assessment. Research shows file counts alone are insufficient - a task modifying 3 tightly coupled files may be harder than one modifying 10 isolated files.
 
-### Default Limits (Per Task)
+### Complexity Scoring (0-13 Scale)
 
-| Limit | Default | Purpose |
-|-------|---------|---------|
-| `max_files_to_create` | 3 | Prevent context overload |
-| `max_files_to_modify` | 5 | Keep changes focused |
-| `max_acceptance_criteria` | 5 | Clear scope definition |
-| `title` | 80 chars | Concise task names |
+Task complexity is assessed using five components:
 
-### Auto-Split Behavior
+| Component | Points | Description |
+|-----------|--------|-------------|
+| `file_scope` | 0-5 | Files touched (0.5 pts each, capped) |
+| `cross_file_deps` | 0-2 | Coupling between directories/layers |
+| `semantic_complexity` | 0-3 | Algorithm/integration difficulty |
+| `requirement_uncertainty` | 0-2 | Vague or unclear requirements |
+| `token_penalty` | 0-1 | Context budget exceeded |
 
-When a task exceeds limits, it's automatically split:
+**Complexity Levels**:
+- **LOW (0-4)**: Safe for autonomous execution
+- **MEDIUM (5-7)**: Requires monitoring
+- **HIGH (8-10)**: Consider decomposition
+- **CRITICAL (11-13)**: Must decompose
 
-1. **Files grouped by directory** - Related files stay together
-2. **Batches respect limits** - Max 3 create, 5 modify per split task
-3. **Criteria distributed** - Round-robin across split tasks
-4. **Dependencies chained** - T1-a → T1-b → T1-c
+### Soft Limits (Guidance Only)
+
+File limits generate warnings but complexity score drives splits:
+
+| Guidance | Default | Purpose |
+|----------|---------|---------|
+| `max_files_to_create` | 5 | Context guidance |
+| `max_files_to_modify` | 8 | Change scope guidance |
+| `max_acceptance_criteria` | 7 | Scope clarity |
+| `complexity_threshold` | 5.0 | Auto-split trigger |
+
+### Auto-Split Strategies
+
+Split strategy is selected based on dominant complexity factor:
+
+1. **Files Strategy** - When file_scope is dominant
+   - Groups files by directory
+   - Keeps related files together
+
+2. **Layers Strategy** - When cross_file_deps is dominant
+   - Separates by architectural layer
+   - Reduces coupling between tasks
+
+3. **Criteria Strategy** - When semantic complexity is dominant
+   - Splits by acceptance criteria
+   - Creates focused, clear sub-tasks
 
 **Example**:
 ```
-Task T1: Create 6 files
-  Original: files=[a.py, b.py, c.py, d.py, e.py, f.py]
+Task T1 (complexity: 8.5 - HIGH):
+  Dominant factor: cross_file_deps
+  Strategy: LAYERS
 
-After Auto-Split (max_files_to_create=3):
-  T1-a: files=[a.py, b.py, c.py], deps=[]
-  T1-b: files=[d.py, e.py, f.py], deps=[T1-a]
+After Auto-Split:
+  T1-a: data layer files, deps=[]
+  T1-b: business layer files, deps=[T1-a]
+  T1-c: presentation layer files, deps=[T1-b]
 ```
 
 ### Configuration
@@ -529,7 +558,8 @@ Override defaults in `.project-config.json`:
   "task_size_limits": {
     "max_files_to_create": 5,
     "max_files_to_modify": 8,
-    "max_criteria_per_task": 10,
+    "max_criteria_per_task": 7,
+    "complexity_threshold": 5.0,
     "auto_split": true
   }
 }
@@ -537,10 +567,10 @@ Override defaults in `.project-config.json`:
 
 ### Best Practices for Planning
 
-- Each task should be completable in **< 10 minutes**
+- Target complexity score **< 5** per task
 - Prefer **many small tasks** over few large tasks
-- Keep related files together when possible
-- If a task touches > 5 files total, **split it manually**
+- Keep related files in the same architectural layer together
+- Watch for high semantic complexity keywords: algorithm, async, concurrent, distributed
 
 ---
 
@@ -1457,6 +1487,47 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - Native Claude Code Skills Architecture for Token Efficiency
+
+- **Issue**: Python-based orchestration spawning Claude via subprocess was token-inefficient (~13k overhead per spawn) and added complexity
+- **Root Cause**: Subprocess spawning duplicates full context to each worker; Python orchestrator added external process management overhead
+- **Fix**: Implemented optimized hybrid architecture using native Claude Code features:
+  1. **Skills System**: Created 10+ skills in `.claude/skills/` to encode workflow logic:
+     - `/orchestrate` - Main workflow orchestration
+     - `/plan-feature` - Planning phase with Task tool
+     - `/validate-plan` - Parallel Cursor + Gemini validation
+     - `/implement-task` - TDD implementation via Task tool
+     - `/verify-code` - Parallel code review
+     - `/call-cursor`, `/call-gemini` - Agent wrappers
+     - `/resolve-conflict` - Conflict resolution
+     - `/phase-status`, `/list-projects` - Status utilities
+  2. **Task Tool for Workers**: Replace subprocess with native Task tool for 70% token savings
+  3. **Bash for External Agents**: Cursor and Gemini called via Bash tool (same CLI, integrated)
+  4. **State via Read/Write**: State persistence using native file tools
+  5. **Multi-Agent Review Preserved**: Same Cursor + Gemini review at every phase
+- **Prevention**:
+  - Always prefer Task tool over subprocess for Claude worker spawning
+  - Use Skills for reusable workflow patterns
+  - Use Bash tool for external CLI agents (Cursor, Gemini)
+  - Keep state in JSON files managed by native Read/Write tools
+- **Applies To**: claude
+- **Files Changed**:
+  - `.claude/skills/orchestrate/SKILL.md` (new)
+  - `.claude/skills/plan-feature/SKILL.md` (new)
+  - `.claude/skills/validate-plan/SKILL.md` (new)
+  - `.claude/skills/implement-task/SKILL.md` (new)
+  - `.claude/skills/verify-code/SKILL.md` (new)
+  - `.claude/skills/call-cursor/SKILL.md` (new)
+  - `.claude/skills/call-gemini/SKILL.md` (new)
+  - `.claude/skills/resolve-conflict/SKILL.md` (new)
+  - `.claude/skills/phase-status/SKILL.md` (new)
+  - `.claude/skills/list-projects/SKILL.md` (new)
+  - `.claude/skills/sync-rules/SKILL.md` (new)
+  - `.claude/skills/add-lesson/SKILL.md` (new)
+  - `.claude/commands/orchestrate.md` (updated)
+  - `.claude/commands/validate.md` (updated)
+  - `.claude/commands/verify.md` (updated)
 
 ### 2026-01-22 - Universal Agent Loop Pattern for All Agents
 

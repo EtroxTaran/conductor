@@ -478,6 +478,92 @@ Instead of implementing the entire feature in one shot, the workflow breaks PROD
 
 ---
 
+## Task Granularity
+
+Tasks are enforced to be small and focused using multi-dimensional complexity assessment. Research shows file counts alone are insufficient - a task modifying 3 tightly coupled files may be harder than one modifying 10 isolated files.
+
+### Complexity Scoring (0-13 Scale)
+
+Task complexity is assessed using five components:
+
+| Component | Points | Description |
+|-----------|--------|-------------|
+| `file_scope` | 0-5 | Files touched (0.5 pts each, capped) |
+| `cross_file_deps` | 0-2 | Coupling between directories/layers |
+| `semantic_complexity` | 0-3 | Algorithm/integration difficulty |
+| `requirement_uncertainty` | 0-2 | Vague or unclear requirements |
+| `token_penalty` | 0-1 | Context budget exceeded |
+
+**Complexity Levels**:
+- **LOW (0-4)**: Safe for autonomous execution
+- **MEDIUM (5-7)**: Requires monitoring
+- **HIGH (8-10)**: Consider decomposition
+- **CRITICAL (11-13)**: Must decompose
+
+### Soft Limits (Guidance Only)
+
+File limits generate warnings but complexity score drives splits:
+
+| Guidance | Default | Purpose |
+|----------|---------|---------|
+| `max_files_to_create` | 5 | Context guidance |
+| `max_files_to_modify` | 8 | Change scope guidance |
+| `max_acceptance_criteria` | 7 | Scope clarity |
+| `complexity_threshold` | 5.0 | Auto-split trigger |
+
+### Auto-Split Strategies
+
+Split strategy is selected based on dominant complexity factor:
+
+1. **Files Strategy** - When file_scope is dominant
+   - Groups files by directory
+   - Keeps related files together
+
+2. **Layers Strategy** - When cross_file_deps is dominant
+   - Separates by architectural layer
+   - Reduces coupling between tasks
+
+3. **Criteria Strategy** - When semantic complexity is dominant
+   - Splits by acceptance criteria
+   - Creates focused, clear sub-tasks
+
+**Example**:
+```
+Task T1 (complexity: 8.5 - HIGH):
+  Dominant factor: cross_file_deps
+  Strategy: LAYERS
+
+After Auto-Split:
+  T1-a: data layer files, deps=[]
+  T1-b: business layer files, deps=[T1-a]
+  T1-c: presentation layer files, deps=[T1-b]
+```
+
+### Configuration
+
+Override defaults in `.project-config.json`:
+
+```json
+{
+  "task_size_limits": {
+    "max_files_to_create": 5,
+    "max_files_to_modify": 8,
+    "max_criteria_per_task": 7,
+    "complexity_threshold": 5.0,
+    "auto_split": true
+  }
+}
+```
+
+### Best Practices for Planning
+
+- Target complexity score **< 5** per task
+- Prefer **many small tasks** over few large tasks
+- Keep related files in the same architectural layer together
+- Watch for high semantic complexity keywords: algorithm, async, concurrent, distributed
+
+---
+
 ## Linear Integration (Optional)
 
 Optionally sync tasks to Linear for project management tracking.

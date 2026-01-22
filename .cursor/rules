@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-22 12:18:05 -->
+<!-- Last synced: 2026-01-22 12:57:24 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Cursor as code quality reviewer.
@@ -939,6 +939,47 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-22 - Native Claude Code Skills Architecture for Token Efficiency
+
+- **Issue**: Python-based orchestration spawning Claude via subprocess was token-inefficient (~13k overhead per spawn) and added complexity
+- **Root Cause**: Subprocess spawning duplicates full context to each worker; Python orchestrator added external process management overhead
+- **Fix**: Implemented optimized hybrid architecture using native Claude Code features:
+  1. **Skills System**: Created 10+ skills in `.claude/skills/` to encode workflow logic:
+     - `/orchestrate` - Main workflow orchestration
+     - `/plan-feature` - Planning phase with Task tool
+     - `/validate-plan` - Parallel Cursor + Gemini validation
+     - `/implement-task` - TDD implementation via Task tool
+     - `/verify-code` - Parallel code review
+     - `/call-cursor`, `/call-gemini` - Agent wrappers
+     - `/resolve-conflict` - Conflict resolution
+     - `/phase-status`, `/list-projects` - Status utilities
+  2. **Task Tool for Workers**: Replace subprocess with native Task tool for 70% token savings
+  3. **Bash for External Agents**: Cursor and Gemini called via Bash tool (same CLI, integrated)
+  4. **State via Read/Write**: State persistence using native file tools
+  5. **Multi-Agent Review Preserved**: Same Cursor + Gemini review at every phase
+- **Prevention**:
+  - Always prefer Task tool over subprocess for Claude worker spawning
+  - Use Skills for reusable workflow patterns
+  - Use Bash tool for external CLI agents (Cursor, Gemini)
+  - Keep state in JSON files managed by native Read/Write tools
+- **Applies To**: claude
+- **Files Changed**:
+  - `.claude/skills/orchestrate/SKILL.md` (new)
+  - `.claude/skills/plan-feature/SKILL.md` (new)
+  - `.claude/skills/validate-plan/SKILL.md` (new)
+  - `.claude/skills/implement-task/SKILL.md` (new)
+  - `.claude/skills/verify-code/SKILL.md` (new)
+  - `.claude/skills/call-cursor/SKILL.md` (new)
+  - `.claude/skills/call-gemini/SKILL.md` (new)
+  - `.claude/skills/resolve-conflict/SKILL.md` (new)
+  - `.claude/skills/phase-status/SKILL.md` (new)
+  - `.claude/skills/list-projects/SKILL.md` (new)
+  - `.claude/skills/sync-rules/SKILL.md` (new)
+  - `.claude/skills/add-lesson/SKILL.md` (new)
+  - `.claude/commands/orchestrate.md` (updated)
+  - `.claude/commands/validate.md` (updated)
+  - `.claude/commands/verify.md` (updated)
 
 ### 2026-01-22 - Universal Agent Loop Pattern for All Agents
 
