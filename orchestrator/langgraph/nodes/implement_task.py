@@ -46,7 +46,8 @@ from ..integrations.board_sync import sync_board
 from ...specialists.runner import SpecialistRunner
 from ...cleanup import CleanupManager
 from ...utils.worktree import WorktreeManager, WorktreeError
-from ...agents import BudgetManager, BudgetExceeded
+from ...agents import BudgetExceeded
+from ...storage import get_budget_storage
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ def _check_budget_before_task(
         None if OK, or dict with errors/escalation if budget exceeded
     """
     try:
-        budget_manager = BudgetManager(project_dir)
+        budget_manager = get_budget_storage(project_dir)
 
         # Quick check if budgets are disabled
         if not budget_manager.config.enabled:

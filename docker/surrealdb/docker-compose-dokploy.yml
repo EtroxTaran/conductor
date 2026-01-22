@@ -1,0 +1,76 @@
+# SurrealDB deployment for Dokploy with WebSocket support
+# Updated to fix WebSocket routing
+
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v2.1
+    container_name: meta-architect-surrealdb
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - start
+      - --log
+      - info
+      - --user
+      - techLeadAgent
+      - --pass
+      - "fvasdHQ-_2145GAa)(Ezwqg"
+      - rocksdb:/data/database.db
+    ports:
+      - "${SURREAL_PORT:-8000}:8000"
+    volumes:
+      - surrealdb_data:/data
+    environment:
+      - SURREAL_PATH=/data/database.db
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:8000/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    networks:
+      - dokploy-network
+    labels:
+      # Enable Traefik for this service
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+
+      # HTTP Router (redirects to HTTPS)
+      - traefik.http.routers.surrealdb-http.rule=Host(`techlead.etrox.de`)
+      - traefik.http.routers.surrealdb-http.entrypoints=web
+      - traefik.http.routers.surrealdb-http.middlewares=redirect-to-https@file
+      - traefik.http.routers.surrealdb-http.service=surrealdb-service
+
+      # HTTPS Router
+      - traefik.http.routers.surrealdb-https.rule=Host(`techlead.etrox.de`)
+      - traefik.http.routers.surrealdb-https.entrypoints=websecure
+      - traefik.http.routers.surrealdb-https.tls=true
+      - traefik.http.routers.surrealdb-https.tls.certresolver=letsencrypt
+      - traefik.http.routers.surrealdb-https.service=surrealdb-service
+
+      # Service definition
+      - traefik.http.services.surrealdb-service.loadbalancer.server.port=8000
+
+      # IMPORTANT: Enable sticky sessions and WebSocket support
+      - traefik.http.services.surrealdb-service.loadbalancer.server.scheme=http
+      - traefik.http.services.surrealdb-service.loadbalancer.passhostheader=true
+
+volumes:
+  surrealdb_data:
+    driver: local
+
+networks:
+  dokploy-network:
+    external: true

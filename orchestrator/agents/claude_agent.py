@@ -13,10 +13,12 @@ Reference: https://docs.anthropic.com/claude-code/cli
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from .base import BaseAgent, AgentResult
-from .session_manager import SessionManager, extract_session_from_cli_response
+
+if TYPE_CHECKING:
+    from ..storage import SessionStorageAdapter
 
 
 # Complexity thresholds for plan mode
@@ -89,10 +91,11 @@ class ClaudeAgent(BaseAgent):
         self.default_budget_usd = default_budget_usd
         self.schema_dir = schema_dir or self._find_schema_dir()
 
-        # Session manager for continuity
-        self._session_manager: Optional[SessionManager] = None
+        # Session manager for continuity (uses storage adapter)
+        self._session_manager: Optional["SessionStorageAdapter"] = None
         if enable_session_continuity:
-            self._session_manager = SessionManager(project_dir)
+            from ..storage import get_session_storage
+            self._session_manager = get_session_storage(project_dir)
 
     def _find_schema_dir(self) -> Optional[Path]:
         """Find the schemas directory."""
@@ -104,8 +107,8 @@ class ClaudeAgent(BaseAgent):
         return None
 
     @property
-    def session_manager(self) -> Optional[SessionManager]:
-        """Get the session manager."""
+    def session_manager(self) -> Optional["SessionStorageAdapter"]:
+        """Get the session storage adapter."""
         return self._session_manager
 
     def get_cli_command(self) -> str:

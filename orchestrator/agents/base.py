@@ -106,13 +106,22 @@ class BaseAgent(ABC):
 
     @property
     def audit_trail(self):
-        """Get or create the audit trail."""
+        """Get or create the audit trail.
+
+        Uses the storage adapter layer which automatically selects
+        between file-based and SurrealDB backends.
+        """
         if self._audit_trail is None and self.enable_audit:
             try:
-                from ..audit import get_project_audit_trail
-                self._audit_trail = get_project_audit_trail(self.project_dir)
+                from ..storage import get_audit_storage
+                self._audit_trail = get_audit_storage(self.project_dir)
             except ImportError:
-                logger.debug("Audit trail not available")
+                # Fallback to direct audit trail if storage module not available
+                try:
+                    from ..audit import get_project_audit_trail
+                    self._audit_trail = get_project_audit_trail(self.project_dir)
+                except ImportError:
+                    logger.debug("Audit trail not available")
         return self._audit_trail
 
     @abstractmethod
@@ -164,20 +173,84 @@ class BaseAgent(ABC):
             AgentResult with execution details
         """
         command = self.build_command(prompt, **kwargs)
-        start_time = time.time()
         timeout = self.get_timeout_for_phase(phase)
 
-        # Start audit entry if enabled
-        audit_entry = None
+        # Use context manager for audit if enabled and task_id provided
         if self.audit_trail and task_id:
-            audit_entry = self.audit_trail.start_entry(
-                agent=self.name,
-                task_id=task_id,
-                prompt=prompt,
-                session_id=session_id,
+            return self._run_with_audit(
                 command=command,
-                metadata={"phase": phase, **{k: str(v)[:100] for k, v in kwargs.items() if v}},
+                prompt=prompt,
+                output_file=output_file,
+                phase=phase,
+                task_id=task_id,
+                session_id=session_id,
+                timeout=timeout,
+                **kwargs,
             )
+        else:
+            return self._run_without_audit(
+                command=command,
+                output_file=output_file,
+                session_id=session_id,
+                timeout=timeout,
+            )
+
+    def _run_with_audit(
+        self,
+        command: list[str],
+        prompt: str,
+        output_file: Optional[Path],
+        phase: Optional[int],
+        task_id: str,
+        session_id: Optional[str],
+        timeout: int,
+        **kwargs,
+    ) -> AgentResult:
+        """Run command with audit trail recording."""
+        metadata = {"phase": phase, **{k: str(v)[:100] for k, v in kwargs.items() if v}}
+
+        with self.audit_trail.record(
+            agent=self.name,
+            task_id=task_id,
+            prompt=prompt,
+            session_id=session_id,
+            command_args=command,
+            metadata=metadata,
+        ) as audit_entry:
+            result = self._execute_command(command, output_file, session_id, timeout)
+
+            # Set result on audit entry
+            audit_entry.set_result(
+                success=result.success,
+                exit_code=result.exit_code,
+                output_length=len(result.output) if result.output else 0,
+                error_length=len(result.error) if result.error else 0,
+                cost_usd=result.cost_usd,
+                model=result.model,
+                parsed_output_type=type(result.parsed_output).__name__ if result.parsed_output else None,
+            )
+
+            return result
+
+    def _run_without_audit(
+        self,
+        command: list[str],
+        output_file: Optional[Path],
+        session_id: Optional[str],
+        timeout: int,
+    ) -> AgentResult:
+        """Run command without audit trail."""
+        return self._execute_command(command, output_file, session_id, timeout)
+
+    def _execute_command(
+        self,
+        command: list[str],
+        output_file: Optional[Path],
+        session_id: Optional[str],
+        timeout: int,
+    ) -> AgentResult:
+        """Execute the actual subprocess command."""
+        start_time = time.time()
 
         try:
             result = subprocess.run(
@@ -219,7 +292,7 @@ class BaseAgent(ABC):
                 model = parsed_output.get("model")
 
             if result.returncode != 0:
-                agent_result = AgentResult(
+                return AgentResult(
                     success=False,
                     output=output,
                     parsed_output=parsed_output,
@@ -231,21 +304,7 @@ class BaseAgent(ABC):
                     model=model,
                 )
 
-                # Record in audit trail
-                if audit_entry:
-                    audit_entry.set_result(
-                        success=False,
-                        exit_code=result.returncode,
-                        output=output,
-                        error=stderr,
-                        parsed_output=parsed_output,
-                        cost_usd=cost_usd,
-                    )
-                    self.audit_trail.commit_entry(audit_entry)
-
-                return agent_result
-
-            agent_result = AgentResult(
+            return AgentResult(
                 success=True,
                 output=output,
                 parsed_output=parsed_output,
@@ -256,27 +315,8 @@ class BaseAgent(ABC):
                 model=model,
             )
 
-            # Record in audit trail
-            if audit_entry:
-                audit_entry.set_result(
-                    success=True,
-                    exit_code=result.returncode,
-                    output=output,
-                    error=stderr,
-                    parsed_output=parsed_output,
-                    cost_usd=cost_usd,
-                )
-                self.audit_trail.commit_entry(audit_entry)
-
-            return agent_result
-
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
-
-            if audit_entry:
-                audit_entry.set_timeout(duration)
-                self.audit_trail.commit_entry(audit_entry)
-
             return AgentResult(
                 success=False,
                 error=f"Command timed out after {timeout} seconds",
@@ -287,11 +327,6 @@ class BaseAgent(ABC):
         except FileNotFoundError as e:
             cli_cmd = self.get_cli_command()
             error_msg = f"CLI not found: {cli_cmd}. Is it installed? Error: {e}"
-
-            if audit_entry:
-                audit_entry.set_error(error_msg)
-                self.audit_trail.commit_entry(audit_entry)
-
             return AgentResult(
                 success=False,
                 error=error_msg,
@@ -302,11 +337,6 @@ class BaseAgent(ABC):
         except PermissionError as e:
             cli_cmd = self.get_cli_command()
             error_msg = f"Permission denied executing {cli_cmd}: {e}"
-
-            if audit_entry:
-                audit_entry.set_error(error_msg)
-                self.audit_trail.commit_entry(audit_entry)
-
             return AgentResult(
                 success=False,
                 error=error_msg,
@@ -318,11 +348,6 @@ class BaseAgent(ABC):
             cli_cmd = self.get_cli_command()
             error_msg = f"OS error executing {cli_cmd}: {e}"
             duration = time.time() - start_time
-
-            if audit_entry:
-                audit_entry.set_error(error_msg)
-                self.audit_trail.commit_entry(audit_entry)
-
             return AgentResult(
                 success=False,
                 error=error_msg,
@@ -336,11 +361,6 @@ class BaseAgent(ABC):
             error_msg = f"Unexpected error: {type(e).__name__}: {e}"
             duration = time.time() - start_time
             logger.error(f"Unexpected error in {cli_cmd}: {type(e).__name__}: {e}")
-
-            if audit_entry:
-                audit_entry.set_error(error_msg)
-                self.audit_trail.commit_entry(audit_entry)
-
             return AgentResult(
                 success=False,
                 error=error_msg,

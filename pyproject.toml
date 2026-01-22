@@ -52,6 +52,10 @@ dependencies = [
     "tenacity>=9.0.0",
     # Terminal UI
     "rich>=13.0.0",
+    # Environment management
+    "python-dotenv>=1.0.0",
+    # SurrealDB for persistent state (optional but recommended)
+    "surrealdb>=0.3.0",
 ]
 
 [project.optional-dependencies]

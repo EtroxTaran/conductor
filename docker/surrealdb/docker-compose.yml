@@ -1,0 +1,46 @@
+version: "3.8"
+
+# SurrealDB deployment for meta-architect orchestrator
+# For Dokploy: Let Dokploy manage the Traefik labels via its UI
+
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v2.1
+    restart: unless-stopped
+    user: "0:0"
+
+    command:
+      - start
+      - --log
+      - info
+      - --user
+      - techLeadAgent
+      - --pass
+      - fvasdHQ-_2145GAaEzwqg
+      - rocksdb:/data/database.db
+
+    volumes:
+      - surrealdb_data:/data
+
+    environment:
+      - SURREAL_PATH=/data/database.db
+
+    healthcheck:
+      test: ["CMD", "/surreal", "isready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  surrealdb_data:
+    driver: local

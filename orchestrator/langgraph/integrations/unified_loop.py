@@ -278,25 +278,25 @@ class UnifiedLoopRunner:
 
     @property
     def budget_manager(self):
-        """Get or create budget manager."""
+        """Get or create budget storage adapter."""
         if self._budget_manager is None and self.config.enable_budget:
             try:
-                from ...agents.budget import BudgetManager
-                self._budget_manager = BudgetManager(self.project_dir)
+                from ...storage import get_budget_storage
+                self._budget_manager = get_budget_storage(self.project_dir)
             except ImportError:
-                logger.debug("BudgetManager not available")
+                logger.debug("BudgetStorageAdapter not available")
         return self._budget_manager
 
     @property
     def session_manager(self):
-        """Get or create session manager (Claude only)."""
+        """Get or create session storage adapter (Claude only)."""
         if self._session_manager is None and self.config.enable_session:
             if self.adapter.capabilities.supports_session:
                 try:
-                    from ...agents.session_manager import SessionManager
-                    self._session_manager = SessionManager(self.project_dir)
+                    from ...storage import get_session_storage
+                    self._session_manager = get_session_storage(self.project_dir)
                 except ImportError:
-                    logger.debug("SessionManager not available")
+                    logger.debug("SessionStorageAdapter not available")
         return self._session_manager
 
     async def run(
@@ -389,7 +389,7 @@ class UnifiedLoopRunner:
                 resume_session = False
                 if self.session_manager and iteration == 1:
                     session = self.session_manager.get_or_create_session(task_id)
-                    session_id = session.session_id if session else None
+                    session_id = session.id if session else None
 
             try:
                 # Run iteration
@@ -413,7 +413,7 @@ class UnifiedLoopRunner:
                         self.budget_manager.record_spend(
                             task_id=task_id,
                             agent=self.config.agent_type,
-                            amount_usd=result.cost_usd,
+                            cost_usd=result.cost_usd,
                             model=result.model or self.config.model,
                         )
 
