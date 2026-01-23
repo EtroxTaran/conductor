@@ -16,6 +16,7 @@ from typing import Any
 from ..state import WorkflowState, PhaseStatus, PhaseState, AgentFeedback
 from ..integrations.action_logging import get_node_logger
 from ...review.resolver import ConflictResolver
+from ...agents.prompts import load_prompt, format_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,14 @@ async def cursor_validate_node(state: WorkflowState) -> dict[str, Any]:
             }],
         }
 
-    prompt = CURSOR_VALIDATION_PROMPT.format(plan=json.dumps(plan, indent=2))
+    # Load prompt from template with fallback to inline
+    plan_json = json.dumps(plan, indent=2)
+    try:
+        template = load_prompt("cursor", "validation")
+        prompt = format_prompt(template, plan=plan_json)
+    except FileNotFoundError:
+        logger.debug("Cursor validation template not found, using inline prompt")
+        prompt = CURSOR_VALIDATION_PROMPT.format(plan=plan_json)
 
     try:
         # Cursor is CLI only
@@ -286,7 +294,14 @@ async def gemini_validate_node(state: WorkflowState) -> dict[str, Any]:
             }],
         }
 
-    prompt = GEMINI_VALIDATION_PROMPT.format(plan=json.dumps(plan, indent=2))
+    # Load prompt from template with fallback to inline
+    plan_json = json.dumps(plan, indent=2)
+    try:
+        template = load_prompt("gemini", "validation")
+        prompt = format_prompt(template, plan=plan_json)
+    except FileNotFoundError:
+        logger.debug("Gemini validation template not found, using inline prompt")
+        prompt = GEMINI_VALIDATION_PROMPT.format(plan=plan_json)
 
     try:
         # Use Gemini CLI to validate plan

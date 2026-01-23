@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..state import WorkflowState
+from ...agents.prompts import load_prompt, format_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,8 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
     1. Tech stack analyzer - examines dependencies and tools
     2. Pattern analyzer - examines code patterns and conventions
 
-    Results are saved to .workflow/phases/research/ and used
-    during planning to make informed decisions.
+    Results are saved to database and used during planning to make
+    informed decisions.
 
     Args:
         state: Current workflow state
@@ -141,14 +142,13 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
         State updates with research findings
     """
     project_dir = Path(state["project_dir"])
-    research_dir = project_dir / ".workflow" / "phases" / "research"
-    research_dir.mkdir(parents=True, exist_ok=True)
+    project_name = state["project_name"]
 
     logger.info("Starting research phase with parallel agents")
 
-    # Check if research already exists and is recent
-    existing_findings = _load_existing_research(research_dir)
-    if existing_findings and _is_research_fresh(research_dir):
+    # Check if research already exists and is recent (from DB)
+    existing_findings = _load_existing_research_from_db(project_name)
+    if existing_findings and _is_research_fresh_from_db(project_name):
         logger.info("Using existing research findings (less than 1 hour old)")
         return {
             "research_complete": True,
@@ -158,12 +158,11 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
 
     # Run research agents in parallel
     findings = ResearchFindings()
-    project_name = state["project_name"]
 
     try:
         # Spawn agents concurrently
         tasks = [
-            _run_research_agent(project_dir, agent, research_dir, project_name)
+            _run_research_agent(project_dir, agent, project_name)
             for agent in RESEARCH_AGENTS
         ]
 
@@ -188,7 +187,7 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
         findings.completed_at = datetime.now().isoformat()
 
         # Save aggregated findings to database
-        _save_aggregated_findings(research_dir, findings, project_name)
+        _save_aggregated_findings(findings, project_name)
 
         logger.info(
             f"Research phase complete. "
@@ -218,7 +217,6 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
 async def _run_research_agent(
     project_dir: Path,
     agent: ResearchAgent,
-    output_dir: Path,
     project_name: str,
 ) -> dict:
     """Run a single research agent.
@@ -226,7 +224,6 @@ async def _run_research_agent(
     Args:
         project_dir: Project directory to analyze
         agent: Research agent definition
-        output_dir: Directory to save results (unused - DB storage)
         project_name: Project name for DB storage
 
     Returns:
@@ -237,19 +234,8 @@ async def _run_research_agent(
     """
     logger.info(f"Running research agent: {agent.name}")
 
-    # Build prompt for agent
-    prompt = f"""You are a research agent analyzing a codebase before implementation planning.
-
-PROJECT DIRECTORY: {project_dir}
-
-{agent.prompt}
-
-IMPORTANT:
-- Only report what you actually find in the codebase
-- If you can't find something, report it as null/empty
-- Be concise and factual
-- Output ONLY the JSON object, no other text
-"""
+    # Get prompt from template or fallback
+    prompt = _get_research_prompt(agent, project_dir)
 
     try:
         # Run Claude with research prompt
@@ -353,21 +339,70 @@ def _parse_research_output(output: str) -> dict:
     return {"raw_output": output}
 
 
-def _load_existing_research(research_dir: Path) -> Optional[ResearchFindings]:
-    """Load existing research findings if available.
+# Map agent IDs to template method names
+AGENT_TEMPLATE_MAP = {
+    "tech_stack": "tech_stack_research",
+    "existing_patterns": "codebase_patterns_research",
+}
+
+
+def _get_research_prompt(agent: ResearchAgent, project_dir: Path) -> str:
+    """Get research prompt from template or fallback to inline.
 
     Args:
-        research_dir: Research output directory
+        agent: Research agent definition
+        project_dir: Project directory
+
+    Returns:
+        Formatted prompt string
+    """
+    template_method = AGENT_TEMPLATE_MAP.get(agent.id)
+
+    if template_method:
+        try:
+            template = load_prompt("claude", template_method)
+            return format_prompt(template, project_dir=str(project_dir))
+        except FileNotFoundError:
+            logger.debug(f"Template for {agent.id} not found, using inline prompt")
+
+    # Fallback to inline prompt with wrapper
+    return f"""You are a research agent analyzing a codebase before implementation planning.
+
+PROJECT DIRECTORY: {project_dir}
+
+{agent.prompt}
+
+IMPORTANT:
+- Only report what you actually find in the codebase
+- If you can't find something, report it as null/empty
+- Be concise and factual
+- Output ONLY the JSON object, no other text
+"""
+
+
+def _load_existing_research_from_db(project_name: str) -> Optional[ResearchFindings]:
+    """Load existing research findings from database if available.
+
+    Args:
+        project_name: Project name for DB lookup
 
     Returns:
         ResearchFindings or None
     """
-    aggregated_file = research_dir / "findings.json"
-    if not aggregated_file.exists():
-        return None
+    from ...db.repositories.logs import get_logs_repository
+    from ...storage.async_utils import run_async
 
     try:
-        data = json.loads(aggregated_file.read_text())
+        repo = get_logs_repository(project_name)
+        logs = run_async(repo.get_by_type("research_aggregated"))
+
+        if not logs:
+            return None
+
+        # Get most recent research
+        latest = logs[0]  # Sorted by created_at desc
+        data = latest.get("content", {})
+
         return ResearchFindings(
             tech_stack=data.get("tech_stack"),
             existing_patterns=data.get("existing_patterns"),
@@ -378,33 +413,49 @@ def _load_existing_research(research_dir: Path) -> Optional[ResearchFindings]:
         return None
 
 
-def _is_research_fresh(research_dir: Path, max_age_hours: int = 1) -> bool:
+def _is_research_fresh_from_db(project_name: str, max_age_hours: int = 1) -> bool:
     """Check if research is recent enough to reuse.
 
     Args:
-        research_dir: Research output directory
+        project_name: Project name for DB lookup
         max_age_hours: Maximum age in hours
 
     Returns:
         True if research is fresh
     """
-    aggregated_file = research_dir / "findings.json"
-    if not aggregated_file.exists():
-        return False
+    from ...db.repositories.logs import get_logs_repository
+    from ...storage.async_utils import run_async
 
     try:
-        mtime = aggregated_file.stat().st_mtime
-        age_hours = (datetime.now().timestamp() - mtime) / 3600
+        repo = get_logs_repository(project_name)
+        logs = run_async(repo.get_by_type("research_aggregated"))
+
+        if not logs:
+            return False
+
+        # Get most recent research
+        latest = logs[0]
+        created_at = latest.get("created_at")
+
+        if not created_at:
+            return False
+
+        # Parse ISO timestamp
+        if isinstance(created_at, str):
+            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            created_dt = created_at
+
+        age_hours = (datetime.now(created_dt.tzinfo) - created_dt).total_seconds() / 3600
         return age_hours < max_age_hours
     except Exception:
         return False
 
 
-def _save_aggregated_findings(research_dir: Path, findings: ResearchFindings, project_name: str) -> None:
+def _save_aggregated_findings(findings: ResearchFindings, project_name: str) -> None:
     """Save aggregated findings to database.
 
     Args:
-        research_dir: Research output directory (unused - DB storage)
         findings: Aggregated findings
         project_name: Project name for DB storage
     """
