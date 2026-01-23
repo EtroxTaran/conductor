@@ -57,22 +57,37 @@ def _build_verification_correction_prompt(
     if cursor_feedback and cursor_feedback.raw_output:
         findings = cursor_feedback.raw_output.get("findings", [])
         if findings:
-            sections.append("\n### Security/Code Issues\n")
+            sections.append("\n### 🔍 Security/Code Findings\n")
             for finding in findings[:10]:
                 f = finding.get("file", "?")
                 ln = finding.get("line", "?")
                 desc = finding.get("description", "")
                 sev = finding.get("severity", "INFO")
                 sections.append(f"- `{f}:{ln}` [{sev}]: {desc}\n")
+        
+        # Check for test failures in raw output if available
+        test_failures = cursor_feedback.raw_output.get("test_failures", [])
+        if test_failures:
+            sections.append("\n### 🧪 Test Failures\n")
+            for failure in test_failures[:5]:
+                sections.append(f"- {failure}\n")
 
     # Architecture issues from gemini
     if gemini_feedback and gemini_feedback.raw_output:
         comments = gemini_feedback.raw_output.get("comments", [])
+        # Also check for 'concerns' if 'comments' is empty (standard format)
+        if not comments:
+            comments = gemini_feedback.raw_output.get("concerns", [])
+            
         if comments:
-            sections.append("\n### Architecture Issues\n")
+            sections.append("\n### 🏛️ Architecture Issues\n")
             for c in comments[:5]:
                 desc = c.get("description", str(c)) if isinstance(c, dict) else str(c)
-                sections.append(f"- {desc}\n")
+                rec = c.get("remediation", "") if isinstance(c, dict) else ""
+                if rec:
+                    sections.append(f"- {desc}\n  *Fix: {rec}*\n")
+                else:
+                    sections.append(f"- {desc}\n")
 
     sections.append("\n### Instructions\n")
     sections.append("1. Fix ALL blocking issues listed above\n")

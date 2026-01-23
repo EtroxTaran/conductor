@@ -48,25 +48,31 @@ def _build_validation_correction_prompt(
     sections.append("Your previous plan was rejected. Address these specific issues:\n")
 
     if blocking_issues:
-        sections.append("\n### Blocking Issues (MUST FIX)\n")
+        sections.append("\n### 🛑 BLOCKING ISSUES (Must Fix)\n")
         for i, issue in enumerate(blocking_issues, 1):
             sections.append(f"{i}. {issue}\n")
 
+    if gemini_feedback and gemini_feedback.concerns:
+        sections.append("\n### 🏛️ Architecture & Strategy (Gemini)\n")
+        for concern in gemini_feedback.concerns[:5]:
+            desc = concern.get("description", str(concern)) if isinstance(concern, dict) else str(concern)
+            rec = concern.get("recommendation", "") if isinstance(concern, dict) else ""
+            if rec:
+                sections.append(f"- {desc}\n  *Recommendation: {rec}*\n")
+            else:
+                sections.append(f"- {desc}\n")
+
     if cursor_feedback and cursor_feedback.concerns:
-        sections.append("\n### Code Quality Concerns (Cursor)\n")
+        sections.append("\n### 🔍 Code Quality & Security (Cursor)\n")
         for concern in cursor_feedback.concerns[:5]:
             desc = concern.get("description", str(concern)) if isinstance(concern, dict) else str(concern)
             sev = concern.get("severity", "medium") if isinstance(concern, dict) else "medium"
-            sections.append(f"- [{sev}] {desc}\n")
-
-    if gemini_feedback and gemini_feedback.concerns:
-        sections.append("\n### Architecture Concerns (Gemini)\n")
-        for concern in gemini_feedback.concerns[:5]:
-            desc = concern.get("description", str(concern)) if isinstance(concern, dict) else str(concern)
-            sections.append(f"- {desc}\n")
+            sections.append(f"- [{sev.upper()}] {desc}\n")
 
     sections.append("\n### Instructions\n")
-    sections.append("Revise your plan to address ALL blocking issues before resubmitting.\n")
+    sections.append("1. Revise your plan to address ALL blocking issues.\n")
+    sections.append("2. Incorporate architectural recommendations where possible.\n")
+    sections.append("3. Ensure security and scalability constraints are met.\n")
     return "".join(sections)
 
 

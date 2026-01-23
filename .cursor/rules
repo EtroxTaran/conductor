@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-23 13:33:29 -->
+<!-- Last synced: 2026-01-23 13:42:04 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Cursor as code quality reviewer.
@@ -936,7 +936,7 @@ python -m orchestrator --project my-app --resume
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.8 -->
+<!-- Version: 1.9 -->
 <!-- Last Updated: 2026-01-23 -->
 
 ## How to Add a Lesson
@@ -950,6 +950,41 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-23 - Global Bugfixer and Optimizer Agents
+
+- **Issue**: Bugfixer only caught ~30% of errors (8 nodes had no error routing), Optimizer only evaluated ~10% of agent executions (`last_agent_execution` was never set)
+- **Root Cause**: Error handling and evaluation were implemented ad-hoc per node instead of as universal infrastructure; no rich error context for diagnosis
+- **Fix**: Implemented comprehensive global agent infrastructure:
+  1. **ErrorContext TypedDict**: Rich error info with stack trace, stderr, state snapshot, suggested recovery actions, recoverability classification
+  2. **AgentExecution TypedDict**: Tracks all agent calls with prompt, output, duration, cost, model, template name
+  3. **Universal Node Wrapper**: `@wrapped_node` decorator catches ALL exceptions, creates ErrorContext, routes to error_dispatch, tracks agent executions
+  4. **Execution Tracker**: `ExecutionTracker` class with context manager for consistent agent call tracking
+  5. **Auto-Recoverability**: Errors auto-classified as recoverable (TimeoutError, ConnectionError, AssertionError) vs requiring human approval
+  6. **Template-Specific Evaluation**: All 9 templates have weighted criteria (planning, validation, code_review, architecture_review, task_implementation, test_writing, bug_fix, fixer_diagnose, fixer_apply)
+  7. **State Reducers**: `_append_executions` and `_append_errors` for merging parallel results
+  8. **Updated All Agent Nodes**: planning, validation (cursor+gemini), verification (cursor+gemini), task/modes now track executions
+- **Prevention**:
+  - Use `@wrapped_node` decorator for ALL new nodes
+  - Use `create_agent_execution()` helper when calling agents
+  - Use `create_error_context()` helper when catching exceptions
+  - All errors route through `error_dispatch` node
+  - All agent executions flow through `evaluate_agent` node
+- **Applies To**: all
+- **Files Changed**:
+  - `orchestrator/langgraph/state.py` - Added ErrorContext, AgentExecution TypedDicts, helpers, reducers
+  - `orchestrator/langgraph/wrappers/__init__.py` - New package exports
+  - `orchestrator/langgraph/wrappers/node_wrapper.py` - Universal decorator, AGENT_NODES registry
+  - `orchestrator/langgraph/wrappers/execution_tracker.py` - ExecutionTracker class
+  - `orchestrator/langgraph/nodes/error_dispatch.py` - Uses rich ErrorContext, SKIP_FIXER_ERROR_TYPES
+  - `orchestrator/langgraph/nodes/planning.py` - Tracks agent execution
+  - `orchestrator/langgraph/nodes/validation.py` - Tracks cursor/gemini executions
+  - `orchestrator/langgraph/nodes/verification.py` - Tracks review executions
+  - `orchestrator/langgraph/nodes/task/modes.py` - Tracks implementation execution
+  - `orchestrator/langgraph/nodes/evaluate_agent.py` - Template-specific TEMPLATE_CRITERIA for all 9 templates
+  - `tests/test_node_wrapper.py` - 16 tests for wrapper
+  - `tests/test_global_error_routing.py` - 18 tests for error dispatch
+  - `tests/test_global_evaluation.py` - 36 tests for evaluation
 
 ### 2026-01-23 - Web Search for Research Agents and HITL User Input
 

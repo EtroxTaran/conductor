@@ -13,11 +13,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..state import WorkflowState, PhaseStatus, PhaseState
+from ..state import (
+    WorkflowState,
+    PhaseStatus,
+    PhaseState,
+    create_agent_execution,
+    create_error_context,
+)
 from ..integrations.action_logging import get_node_logger
 from ...specialists.runner import SpecialistRunner
 
 logger = logging.getLogger(__name__)
+
+# Agent tracking constants
+AGENT_NAME = "claude"
+TEMPLATE_NAME = "planning"
 
 
 class PlanValidationError(Exception):
@@ -275,12 +285,29 @@ Please revise the plan to resolve these blocking issues."""
         phase_1.output = {"plan_saved": True}
         phase_status["1"] = phase_1
 
+        # Track agent execution for evaluation
+        execution = create_agent_execution(
+            agent=AGENT_NAME,
+            node="planning",
+            template_name=TEMPLATE_NAME,
+            prompt=prompt[:5000],  # Truncate for storage
+            output=output[:10000] if output else "",
+            success=True,
+            exit_code=0,
+            duration_seconds=(time.time() - start_time),
+            model=getattr(result, 'model', 'claude'),
+            task_id=None,  # Planning is not task-specific
+        )
+
         return {
             "plan": plan,
             "phase_status": phase_status,
             "current_phase": 2,
             "next_decision": "continue",
             "updated_at": datetime.now().isoformat(),
+            # Agent execution tracking
+            "last_agent_execution": execution,
+            "execution_history": [execution],
         }
 
     except Exception as e:
@@ -292,6 +319,28 @@ Please revise the plan to resolve these blocking issues."""
         phase_1.status = PhaseStatus.FAILED
         phase_1.error = str(e)
         phase_status["1"] = phase_1
+
+        # Create rich error context for fixer
+        error_context = create_error_context(
+            source_node="planning",
+            exception=e,
+            state=dict(state),
+            recoverable=True,  # Planning errors are usually recoverable
+            suggested_actions=["retry_with_modified_prompt", "simplify_requirements"],
+        )
+
+        # Track failed agent execution
+        failed_execution = create_agent_execution(
+            agent=AGENT_NAME,
+            node="planning",
+            template_name=TEMPLATE_NAME,
+            prompt=prompt[:5000],
+            output=str(e),
+            success=False,
+            exit_code=1,
+            duration_seconds=(time.time() - start_time),
+            error_context=error_context,
+        )
 
         # Check if we can retry
         if phase_1.attempts < phase_1.max_attempts:
@@ -306,6 +355,9 @@ Please revise the plan to resolve these blocking issues."""
                     "attempt": phase_1.attempts,
                     "timestamp": datetime.now().isoformat(),
                 }],
+                "error_context": error_context,
+                "last_agent_execution": failed_execution,
+                "execution_history": [failed_execution],
             }
         else:
             action_logger.log_phase_failed(1, "Planning", str(e))
@@ -319,4 +371,7 @@ Please revise the plan to resolve these blocking issues."""
                     "phase": 1,
                     "timestamp": datetime.now().isoformat(),
                 }],
+                "error_context": error_context,
+                "last_agent_execution": failed_execution,
+                "execution_history": [failed_execution],
             }

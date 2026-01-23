@@ -9,11 +9,18 @@ Provides different strategies for implementing tasks:
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from ...state import WorkflowState, Task, TaskStatus
+from ...state import (
+    WorkflowState,
+    Task,
+    TaskStatus,
+    create_agent_execution,
+    create_error_context,
+)
 from ...integrations.ralph_loop import (
     RalphLoopConfig,
     run_ralph_loop,
@@ -427,9 +434,11 @@ async def implement_standard(
         State updates
     """
     task_id = task["id"]
+    start_time = time.time()
 
     # Build prompt using scoped or full context
     prompt = build_task_prompt(task, state, project_dir)
+    model_used = fallback_model if use_fallback_model else "claude"
 
     try:
         # Use SpecialistRunner to execute A04-implementer
@@ -441,6 +450,7 @@ async def implement_standard(
         if use_fallback_model and fallback_model:
             logger.info(f"Using fallback model '{fallback_model}' for standard implementation")
             agent.model = fallback_model
+            model_used = fallback_model
 
         result = await asyncio.to_thread(agent.run, prompt)
 
@@ -449,6 +459,20 @@ async def implement_standard(
 
         # Parse the raw output string into JSON
         output = parse_task_output(result.output, task_id)
+
+        # Track successful agent execution
+        execution = create_agent_execution(
+            agent="claude",
+            node="implement_task",
+            template_name="task_implementation",
+            prompt=prompt[:5000],
+            output=result.output[:10000] if result.output else "",
+            success=True,
+            exit_code=0,
+            duration_seconds=(time.time() - start_time),
+            model=model_used,
+            task_id=task_id,
+        )
 
         # Check if worker needs clarification
         if output.get("status") == "needs_clarification":
@@ -470,6 +494,8 @@ async def implement_standard(
                 }],
                 "next_decision": "escalate",
                 "updated_at": datetime.now().isoformat(),
+                "last_agent_execution": execution,
+                "execution_history": [execution],
             }
 
         # Task implemented - save result
@@ -505,15 +531,74 @@ async def implement_standard(
             "tasks": [updated_task],
             "next_decision": "continue",  # Will go to verify_task
             "updated_at": datetime.now().isoformat(),
+            "last_agent_execution": execution,
+            "execution_history": [execution],
         }
 
     except asyncio.TimeoutError:
         logger.error(f"Task {task_id} timed out after {TASK_TIMEOUT}s")
-        return handle_task_error(
+
+        # Create error context for timeout
+        timeout_error = TimeoutError(f"Task timed out after {TASK_TIMEOUT // 60} minutes")
+        error_context = create_error_context(
+            source_node="implement_task",
+            exception=timeout_error,
+            state=dict(state),
+            recoverable=True,
+        )
+
+        # Track failed execution
+        failed_execution = create_agent_execution(
+            agent="claude",
+            node="implement_task",
+            template_name="task_implementation",
+            prompt=prompt[:5000],
+            output="Timeout",
+            success=False,
+            exit_code=1,
+            duration_seconds=(time.time() - start_time),
+            model=model_used,
+            task_id=task_id,
+            error_context=error_context,
+        )
+
+        error_result = handle_task_error(
             updated_task,
             f"Task timed out after {TASK_TIMEOUT // 60} minutes",
         )
+        error_result["error_context"] = error_context
+        error_result["last_agent_execution"] = failed_execution
+        error_result["execution_history"] = [failed_execution]
+        return error_result
 
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")
-        return handle_task_error(updated_task, str(e))
+
+        # Create error context
+        error_context = create_error_context(
+            source_node="implement_task",
+            exception=e,
+            state=dict(state),
+            recoverable=True,
+        )
+
+        # Track failed execution
+        failed_execution = create_agent_execution(
+            agent="claude",
+            node="implement_task",
+            template_name="task_implementation",
+            prompt=prompt[:5000],
+            output=str(e),
+            success=False,
+            exit_code=1,
+            duration_seconds=(time.time() - start_time),
+            model=model_used,
+            task_id=task_id,
+            error_context=error_context,
+        )
+
+        error_result = handle_task_error(updated_task, str(e))
+        error_result["error_context"] = error_context
+        error_result["last_agent_execution"] = failed_execution
+        error_result["execution_history"] = [failed_execution]
+        return error_result
