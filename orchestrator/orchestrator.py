@@ -525,6 +525,62 @@ class Orchestrator:
             return phase_5.status.value == "completed" if hasattr(phase_5.status, "value") else phase_5.status == "completed"
         return False
 
+    def _extract_interrupt_data(self, pending: dict) -> Optional[dict]:
+        """Extract interrupt data from pending interrupt for UI display.
+
+        Args:
+            pending: Pending interrupt data from LangGraph
+
+        Returns:
+            Formatted interrupt data for UserInputManager, or None if not extractable
+        """
+        if not pending:
+            return None
+
+        # Get the interrupt value (the data passed to interrupt())
+        interrupt_value = pending.get("value")
+        if not interrupt_value:
+            # Try to infer from pending structure
+            interrupt_value = pending
+
+        # Determine interrupt type
+        interrupt_type = interrupt_value.get("type")
+        if not interrupt_type:
+            # Try to infer type from content
+            if "issue" in interrupt_value or "error" in interrupt_value:
+                interrupt_type = "escalation"
+            elif "approval" in str(interrupt_value).lower():
+                interrupt_type = "approval_required"
+            else:
+                interrupt_type = "escalation"  # Default to escalation
+
+        # Build normalized interrupt data
+        data = {
+            "type": interrupt_type,
+            "phase": interrupt_value.get("phase") or pending.get("paused_at", "unknown"),
+        }
+
+        if interrupt_type == "escalation":
+            data.update({
+                "issue": interrupt_value.get("issue") or interrupt_value.get("error") or "An issue occurred",
+                "error_type": interrupt_value.get("error_type", "workflow_error"),
+                "suggested_actions": interrupt_value.get("suggested_actions", []),
+                "clarifications": interrupt_value.get("clarifications", []),
+                "context": interrupt_value.get("context", {}),
+                "retry_count": interrupt_value.get("retry_count", 0),
+                "max_retries": interrupt_value.get("max_retries", 3),
+            })
+        elif interrupt_type == "approval_required":
+            data.update({
+                "approval_type": interrupt_value.get("approval_type", "general"),
+                "summary": interrupt_value.get("summary") or interrupt_value.get("message", "Approval required"),
+                "details": interrupt_value.get("details", {}),
+                "scores": interrupt_value.get("scores", {}),
+                "files_changed": interrupt_value.get("files_changed", []),
+            })
+
+        return data
+
     async def resume_langgraph(
         self,
         human_response: Optional[dict] = None,
@@ -544,7 +600,7 @@ class Orchestrator:
             Dictionary with workflow results
         """
         from .langgraph import WorkflowRunner
-        from .ui import create_display, UICallbackHandler
+        from .ui import create_display, UICallbackHandler, UserInputManager
 
         self.logger.banner("Resuming LangGraph Workflow")
 
@@ -565,11 +621,11 @@ class Orchestrator:
             self.logger.info("Resuming in autonomous mode (no human consultation)")
 
         display = create_display(self.project_dir.name) if use_rich_display else None
-        
+
         callback = None
         if display:
             callback = UICallbackHandler(display)
-            
+
         active_callback = progress_callback if progress_callback else callback
 
         # Pass execution mode through config
@@ -580,7 +636,19 @@ class Orchestrator:
         try:
             async with WorkflowRunner(self.project_dir) as runner:
                 pending = await runner.get_pending_interrupt_async()
-                if pending:
+
+                # Handle HITL input if there's a pending interrupt and no response provided
+                if pending and human_response is None and not autonomous:
+                    self.logger.info(f"Workflow paused at: {pending['paused_at']}")
+
+                    # Extract interrupt data and prompt for user input
+                    interrupt_data = self._extract_interrupt_data(pending)
+                    if interrupt_data:
+                        input_manager = UserInputManager()
+                        human_response = input_manager.handle_interrupt(interrupt_data)
+                        self.logger.info(f"User response: {human_response.get('action', 'unknown')}")
+
+                elif pending:
                     self.logger.info(f"Workflow paused at: {pending['paused_at']}")
 
                 if display:

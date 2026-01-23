@@ -42,6 +42,38 @@ class SecurityConfig:
 
 
 @dataclass
+class ResearchConfig:
+    """Configuration for research phase."""
+    # Basic web search is ON by default (free, all CLIs support it)
+    web_research_enabled: bool = True
+    web_research_timeout: int = 60
+
+    # Basic tools (default) - free, built into Claude Code
+    basic_web_tools: list[str] = field(default_factory=lambda: [
+        "WebSearch",
+        "WebFetch",
+    ])
+
+    # Deep research tools (optional) - requires Perplexity API
+    perplexity_enabled: bool = False
+    perplexity_tools: list[str] = field(default_factory=lambda: [
+        "mcp__perplexity__perplexity_search",
+        "mcp__perplexity__perplexity_ask",
+        "mcp__perplexity__perplexity_research",
+    ])
+
+    fallback_on_web_failure: bool = True
+
+    @property
+    def web_tools(self) -> list[str]:
+        """Get all enabled web tools."""
+        tools = list(self.basic_web_tools)
+        if self.perplexity_enabled:
+            tools.extend(self.perplexity_tools)
+        return tools
+
+
+@dataclass
 class WorkflowFeatures:
     """Feature flags for workflow nodes."""
     product_validation: bool = True
@@ -69,6 +101,7 @@ class ProjectConfig:
     quality: QualityConfig = field(default_factory=QualityConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
+    research: ResearchConfig = field(default_factory=ResearchConfig)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -101,6 +134,14 @@ class ProjectConfig:
                 "approval_phases": self.workflow.approval_phases,
                 "parallel_workers": self.workflow.parallel_workers,
                 "review_gating": self.workflow.review_gating,
+            },
+            "research": {
+                "web_research_enabled": self.research.web_research_enabled,
+                "web_research_timeout": self.research.web_research_timeout,
+                "basic_web_tools": self.research.basic_web_tools,
+                "perplexity_enabled": self.research.perplexity_enabled,
+                "perplexity_tools": self.research.perplexity_tools,
+                "fallback_on_web_failure": self.research.fallback_on_web_failure,
             },
         }
 
@@ -327,6 +368,22 @@ def _merge_config(base: ProjectConfig, custom: dict) -> ProjectConfig:
             base.workflow.parallel_workers = max(1, int(w["parallel_workers"]))
         if "review_gating" in w:
             base.workflow.review_gating = str(w["review_gating"])
+
+    # Update research config
+    if "research" in custom:
+        r = custom["research"]
+        if "web_research_enabled" in r:
+            base.research.web_research_enabled = bool(r["web_research_enabled"])
+        if "web_research_timeout" in r:
+            base.research.web_research_timeout = int(r["web_research_timeout"])
+        if "basic_web_tools" in r:
+            base.research.basic_web_tools = list(r["basic_web_tools"])
+        if "perplexity_enabled" in r:
+            base.research.perplexity_enabled = bool(r["perplexity_enabled"])
+        if "perplexity_tools" in r:
+            base.research.perplexity_tools = list(r["perplexity_tools"])
+        if "fallback_on_web_failure" in r:
+            base.research.fallback_on_web_failure = bool(r["fallback_on_web_failure"])
 
     return base
 

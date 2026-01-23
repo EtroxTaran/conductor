@@ -7,6 +7,18 @@ from typing import Optional
 from orchestrator.ui.state_adapter import TaskUIInfo, EventLogEntry, UIStateSnapshot
 from orchestrator.ui.callbacks import NullCallback, ProgressCallback, UICallbackHandler
 from orchestrator.ui.display import PlaintextDisplay, WorkflowDisplay, UIState
+from orchestrator.ui.input_manager import UserInputManager
+from orchestrator.ui.interrupt_display import InterruptDisplay
+from orchestrator.ui.prompt_helpers import (
+    prompt_menu,
+    prompt_multiline,
+    prompt_confirm,
+    prompt_text_block,
+    display_info_box,
+    display_warning,
+    display_error,
+    display_success,
+)
 
 
 def is_interactive() -> bool:
@@ -70,15 +82,31 @@ def create_display(
 
 
 __all__ = [
+    # Display creation
     "create_display",
     "is_interactive",
+    # Display classes
     "PlaintextDisplay",
     "WorkflowDisplay",
     "UIState",
+    # Callbacks
     "UICallbackHandler",
     "ProgressCallback",
     "NullCallback",
+    # State adapters
     "TaskUIInfo",
     "EventLogEntry",
     "UIStateSnapshot",
+    # HITL input handling
+    "UserInputManager",
+    "InterruptDisplay",
+    # Prompt helpers
+    "prompt_menu",
+    "prompt_multiline",
+    "prompt_confirm",
+    "prompt_text_block",
+    "display_info_box",
+    "display_warning",
+    "display_error",
+    "display_success",
 ]

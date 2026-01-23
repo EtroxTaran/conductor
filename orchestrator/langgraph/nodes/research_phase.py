@@ -38,6 +38,7 @@ class ResearchAgent:
     prompt: str
     output_file: str
     priority: int = 1  # Lower = higher priority
+    requires_web: bool = False  # Whether this agent needs web search tools
 
 
 # Research agent definitions
@@ -104,6 +105,14 @@ Base findings on actual code, not assumptions. Be concise.""",
         output_file="existing_patterns.json",
         priority=2,
     ),
+    ResearchAgent(
+        id="web_research",
+        name="Web Research Agent",
+        prompt="Search the web for documentation, security advisories, best practices, and common pitfalls for the project's tech stack.",
+        output_file="web_research.json",
+        priority=3,
+        requires_web=True,
+    ),
 ]
 
 
@@ -113,6 +122,7 @@ class ResearchFindings:
 
     tech_stack: Optional[dict] = None
     existing_patterns: Optional[dict] = None
+    web_research: Optional[dict] = None
     errors: list[dict] = field(default_factory=list)
     completed_at: Optional[str] = None
 
@@ -120,6 +130,7 @@ class ResearchFindings:
         return {
             "tech_stack": self.tech_stack,
             "existing_patterns": self.existing_patterns,
+            "web_research": self.web_research,
             "errors": self.errors,
             "completed_at": self.completed_at,
         }
@@ -156,13 +167,19 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
             "updated_at": datetime.now().isoformat(),
         }
 
+    # Load research configuration
+    from ...config.thresholds import load_project_config
+
+    project_config = load_project_config(project_dir)
+    research_config = project_config.research
+
     # Run research agents in parallel
     findings = ResearchFindings()
 
     try:
         # Spawn agents concurrently
         tasks = [
-            _run_research_agent(project_dir, agent, project_name)
+            _run_research_agent(project_dir, agent, project_name, research_config)
             for agent in RESEARCH_AGENTS
         ]
 
@@ -183,6 +200,8 @@ async def research_phase_node(state: WorkflowState) -> dict[str, Any]:
                     findings.tech_stack = result
                 elif agent.id == "existing_patterns":
                     findings.existing_patterns = result
+                elif agent.id == "web_research":
+                    findings.web_research = result
 
         findings.completed_at = datetime.now().isoformat()
 
@@ -218,6 +237,7 @@ async def _run_research_agent(
     project_dir: Path,
     agent: ResearchAgent,
     project_name: str,
+    config: Optional["ResearchConfig"] = None,
 ) -> dict:
     """Run a single research agent.
 
@@ -225,6 +245,7 @@ async def _run_research_agent(
         project_dir: Project directory to analyze
         agent: Research agent definition
         project_name: Project name for DB storage
+        config: Research configuration (optional, uses defaults if not provided)
 
     Returns:
         Parsed research findings as dict
@@ -232,16 +253,44 @@ async def _run_research_agent(
     Raises:
         Exception: If agent fails or times out
     """
+    from ...config.thresholds import ResearchConfig
+
+    if config is None:
+        config = ResearchConfig()
+
     logger.info(f"Running research agent: {agent.name}")
+
+    # Determine tools based on agent type and config
+    if agent.requires_web:
+        if not config.web_research_enabled:
+            logger.info(f"Web research disabled, skipping agent: {agent.id}")
+            return {"skipped": True, "reason": "web_research_disabled"}
+
+        # Basic web tools (WebSearch, WebFetch) - always included when web enabled
+        tools = list(config.basic_web_tools)
+
+        # Add Perplexity tools if enabled (premium feature)
+        if config.perplexity_enabled:
+            tools.extend(config.perplexity_tools)
+
+        # Also include codebase tools for context
+        tools.extend(["Read", "Glob", "Grep"])
+        allowed_tools = ",".join(tools)
+    else:
+        # Codebase-only agents
+        allowed_tools = "Read,Glob,Grep"
 
     # Get prompt from template or fallback
     prompt = _get_research_prompt(agent, project_dir)
 
+    # Use configured timeout for web research
+    timeout = config.web_research_timeout if agent.requires_web else RESEARCH_TIMEOUT
+
     try:
         # Run Claude with research prompt
         result = await asyncio.wait_for(
-            _spawn_claude_agent(project_dir, prompt),
-            timeout=RESEARCH_TIMEOUT,
+            _spawn_claude_agent(project_dir, prompt, allowed_tools),
+            timeout=timeout,
         )
 
         # Parse JSON output
@@ -263,7 +312,11 @@ async def _run_research_agent(
         raise Exception(f"Research agent {agent.id} failed: {e}")
 
 
-async def _spawn_claude_agent(project_dir: Path, prompt: str) -> str:
+async def _spawn_claude_agent(
+    project_dir: Path,
+    prompt: str,
+    allowed_tools: str = "Read,Glob,Grep",
+) -> str:
     """Spawn a Claude agent for research.
 
     Uses read-only tools to analyze the codebase without modification.
@@ -271,13 +324,11 @@ async def _spawn_claude_agent(project_dir: Path, prompt: str) -> str:
     Args:
         project_dir: Project directory
         prompt: Research prompt
+        allowed_tools: Comma-separated list of allowed tools (default: codebase-only)
 
     Returns:
         Raw agent output
     """
-    # Use limited tools for research (read-only)
-    allowed_tools = "Read,Glob,Grep"
-
     cmd = [
         "claude",
         "-p",
@@ -343,6 +394,7 @@ def _parse_research_output(output: str) -> dict:
 AGENT_TEMPLATE_MAP = {
     "tech_stack": "tech_stack_research",
     "existing_patterns": "codebase_patterns_research",
+    "web_research": "web_research",
 }
 
 
@@ -365,6 +417,10 @@ def _get_research_prompt(agent: ResearchAgent, project_dir: Path) -> str:
         except FileNotFoundError:
             logger.debug(f"Template for {agent.id} not found, using inline prompt")
 
+    # Special fallback for web_research agent
+    if agent.id == "web_research":
+        return _get_web_research_fallback_prompt(project_dir)
+
     # Fallback to inline prompt with wrapper
     return f"""You are a research agent analyzing a codebase before implementation planning.
 
@@ -375,6 +431,61 @@ PROJECT DIRECTORY: {project_dir}
 IMPORTANT:
 - Only report what you actually find in the codebase
 - If you can't find something, report it as null/empty
+- Be concise and factual
+- Output ONLY the JSON object, no other text
+"""
+
+
+def _get_web_research_fallback_prompt(project_dir: Path) -> str:
+    """Get fallback prompt for web research agent.
+
+    Args:
+        project_dir: Project directory
+
+    Returns:
+        Web research prompt string
+    """
+    return f"""You are a web research agent gathering up-to-date information for a software project.
+
+PROJECT DIRECTORY: {project_dir}
+
+Your task is to search the web for relevant information about the technologies detected in this project.
+
+SEARCH FOR:
+1. Official documentation links for detected frameworks and libraries
+2. Recent security advisories (CVEs) for the tech stack
+3. Best practices and recommended patterns for detected frameworks
+4. Common pitfalls and gotchas to avoid
+5. Version compatibility notes between detected dependencies
+
+WORKFLOW:
+1. First, use Read/Glob to examine package.json, pyproject.toml, go.mod, or Cargo.toml to identify the tech stack
+2. Then use WebSearch to find relevant documentation and security advisories
+3. Use WebFetch to read specific documentation pages if needed
+
+Output a JSON object with this structure:
+{{
+    "documentation_links": [
+        {{"name": "React Docs", "url": "https://react.dev", "relevance": "core framework"}}
+    ],
+    "security_advisories": [
+        {{"package": "lodash", "cve": "CVE-2021-23337", "severity": "high", "fixed_in": "4.17.21"}}
+    ],
+    "best_practices": [
+        {{"topic": "React hooks", "recommendation": "Use useCallback for memoization", "source": "React docs"}}
+    ],
+    "pitfalls": [
+        {{"issue": "Stale closures in useEffect", "solution": "Add all dependencies to dependency array"}}
+    ],
+    "version_notes": [
+        {{"note": "React 18 requires Node 14+", "affects": ["react", "node"]}}
+    ]
+}}
+
+IMPORTANT:
+- Focus on the ACTUAL tech stack found in the project
+- Only include relevant, recent information (last 2 years)
+- Verify security advisories are real CVEs
 - Be concise and factual
 - Output ONLY the JSON object, no other text
 """
@@ -406,6 +517,7 @@ def _load_existing_research_from_db(project_name: str) -> Optional[ResearchFindi
         return ResearchFindings(
             tech_stack=data.get("tech_stack"),
             existing_patterns=data.get("existing_patterns"),
+            web_research=data.get("web_research"),
             errors=data.get("errors", []),
             completed_at=data.get("completed_at"),
         )

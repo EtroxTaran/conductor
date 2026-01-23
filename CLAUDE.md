@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-23 13:28:30 -->
+<!-- Last synced: 2026-01-23 13:33:29 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -11,8 +11,8 @@ Instructions for Claude Code as lead orchestrator.
 # Claude-Specific Rules
 
 <!-- AGENT-SPECIFIC: Only applies to Claude -->
-<!-- Version: 5.0 -->
-<!-- Updated: 2026-01-22 - Added autonomous mode for fully automated execution -->
+<!-- Version: 5.1 -->
+<!-- Updated: 2026-01-23 - Added web research config and HITL documentation -->
 
 ---
 
@@ -292,6 +292,86 @@ python -m orchestrator --project my-app --start --autonomous
 - Projects with ambiguous requirements
 - When you need to verify each step
 - Critical production code changes
+
+---
+
+## Research Configuration
+
+The research phase can search the web for up-to-date documentation, security advisories, and best practices.
+
+### Default Behavior (No Config Needed)
+- **WebSearch** and **WebFetch** tools are enabled
+- Web research agent runs automatically alongside codebase analysis agents
+- Searches for: documentation links, CVEs, best practices, common pitfalls
+
+### Enable Perplexity Deep Research (Optional)
+For more comprehensive research with citations, enable Perplexity MCP tools:
+
+```json
+{
+  "research": {
+    "perplexity_enabled": true
+  }
+}
+```
+
+**Perplexity Tools Added:**
+- `mcp__perplexity__perplexity_search` - Web search
+- `mcp__perplexity__perplexity_ask` - Conversational research
+- `mcp__perplexity__perplexity_research` - Deep research with citations
+
+### Disable Web Research (Rare)
+```json
+{
+  "research": {
+    "web_research_enabled": false
+  }
+}
+```
+
+### Full Research Config
+```json
+{
+  "research": {
+    "web_research_enabled": true,
+    "web_research_timeout": 60,
+    "perplexity_enabled": false,
+    "fallback_on_web_failure": true
+  }
+}
+```
+
+---
+
+## Interactive HITL Mode
+
+When running in interactive mode (default), the workflow will pause and prompt for user input at critical points.
+
+### When HITL Prompts Appear
+- **Escalations**: When errors occur and need human decision
+- **Approval Gates**: When configured phases require approval
+- **Clarifications**: When the system needs additional information
+
+### HITL Actions for Escalations
+| Action | Description |
+|--------|-------------|
+| `retry` | Retry the current phase |
+| `skip` | Skip to next phase |
+| `continue` | Continue (you fixed it externally) |
+| `answer_clarification` | Answer clarification questions |
+| `abort` | Abort the workflow |
+
+### HITL Actions for Approvals
+| Action | Description |
+|--------|-------------|
+| `approve` | Approve and continue |
+| `reject` | Reject and abort workflow |
+| `request_changes` | Request changes and retry phase |
+
+### Non-Interactive Defaults
+In CI or non-TTY environments, safe defaults are used:
+- **Escalations**: Abort
+- **Approvals**: Reject
 
 ---
 
@@ -1644,7 +1724,7 @@ python -m orchestrator --project my-app --resume
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.7 -->
+<!-- Version: 1.8 -->
 <!-- Last Updated: 2026-01-23 -->
 
 ## How to Add a Lesson
@@ -1658,6 +1738,38 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-23 - Web Search for Research Agents and HITL User Input
+
+- **Issue**: Research agents relied solely on codebase analysis and training data; workflow interrupts had no interactive CLI for human input
+- **Root Cause**: No web search capability for up-to-date documentation/security advisories; non-interactive mode meant users couldn't respond to escalations
+- **Fix**: Implemented two enhancements:
+  1. **Web Research Agent**: New research agent that searches web for documentation, CVEs, best practices
+     - `ResearchConfig` dataclass with configurable tools (WebSearch, WebFetch, Perplexity MCP)
+     - Basic web tools ON by default (free, built into Claude Code)
+     - Perplexity deep research optional (requires API)
+     - Tool selection based on agent `requires_web` field
+  2. **Interactive HITL CLI**: Rich-based display and input for workflow interrupts
+     - `UserInputManager` routes escalation/approval interrupts
+     - `InterruptDisplay` shows context with panels/tables
+     - `prompt_helpers` module for reusable menu/confirm/text prompts
+     - Auto-detection of interactive mode (TTY check, CI env vars)
+     - Safe defaults for non-interactive (abort/reject)
+- **Prevention**:
+  - Use `ResearchConfig` for web tool configuration
+  - Check `requires_web` field before spawning research agents
+  - Use `UserInputManager.handle_interrupt()` for HITL processing
+  - Test for `is_interactive()` before prompting users
+- **Applies To**: all
+- **Files Changed**:
+  - `orchestrator/config/thresholds.py` - Added ResearchConfig dataclass
+  - `orchestrator/langgraph/nodes/research_phase.py` - Web research agent, tool selection
+  - `orchestrator/agents/prompts/claude_web_research.md` - Web research prompt template
+  - `orchestrator/ui/prompt_helpers.py` - Reusable prompt utilities (new)
+  - `orchestrator/ui/interrupt_display.py` - Rich display components (new)
+  - `orchestrator/ui/input_manager.py` - UserInputManager class (new)
+  - `orchestrator/ui/__init__.py` - Exported new classes
+  - `orchestrator/orchestrator.py` - HITL integration in resume_langgraph()
 
 ### 2026-01-23 - Dynamic Role Dispatch for Task-Aware Agent Selection
 

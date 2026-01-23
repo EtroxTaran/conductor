@@ -1,8 +1,8 @@
 # Claude-Specific Rules
 
 <!-- AGENT-SPECIFIC: Only applies to Claude -->
-<!-- Version: 5.0 -->
-<!-- Updated: 2026-01-22 - Added autonomous mode for fully automated execution -->
+<!-- Version: 5.1 -->
+<!-- Updated: 2026-01-23 - Added web research config and HITL documentation -->
 
 ---
 
@@ -282,6 +282,86 @@ python -m orchestrator --project my-app --start --autonomous
 - Projects with ambiguous requirements
 - When you need to verify each step
 - Critical production code changes
+
+---
+
+## Research Configuration
+
+The research phase can search the web for up-to-date documentation, security advisories, and best practices.
+
+### Default Behavior (No Config Needed)
+- **WebSearch** and **WebFetch** tools are enabled
+- Web research agent runs automatically alongside codebase analysis agents
+- Searches for: documentation links, CVEs, best practices, common pitfalls
+
+### Enable Perplexity Deep Research (Optional)
+For more comprehensive research with citations, enable Perplexity MCP tools:
+
+```json
+{
+  "research": {
+    "perplexity_enabled": true
+  }
+}
+```
+
+**Perplexity Tools Added:**
+- `mcp__perplexity__perplexity_search` - Web search
+- `mcp__perplexity__perplexity_ask` - Conversational research
+- `mcp__perplexity__perplexity_research` - Deep research with citations
+
+### Disable Web Research (Rare)
+```json
+{
+  "research": {
+    "web_research_enabled": false
+  }
+}
+```
+
+### Full Research Config
+```json
+{
+  "research": {
+    "web_research_enabled": true,
+    "web_research_timeout": 60,
+    "perplexity_enabled": false,
+    "fallback_on_web_failure": true
+  }
+}
+```
+
+---
+
+## Interactive HITL Mode
+
+When running in interactive mode (default), the workflow will pause and prompt for user input at critical points.
+
+### When HITL Prompts Appear
+- **Escalations**: When errors occur and need human decision
+- **Approval Gates**: When configured phases require approval
+- **Clarifications**: When the system needs additional information
+
+### HITL Actions for Escalations
+| Action | Description |
+|--------|-------------|
+| `retry` | Retry the current phase |
+| `skip` | Skip to next phase |
+| `continue` | Continue (you fixed it externally) |
+| `answer_clarification` | Answer clarification questions |
+| `abort` | Abort the workflow |
+
+### HITL Actions for Approvals
+| Action | Description |
+|--------|-------------|
+| `approve` | Approve and continue |
+| `reject` | Reject and abort workflow |
+| `request_changes` | Request changes and retry phase |
+
+### Non-Interactive Defaults
+In CI or non-TTY environments, safe defaults are used:
+- **Escalations**: Abort
+- **Approvals**: Reject
 
 ---
 

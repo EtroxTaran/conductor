@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-23 13:28:30 -->
+<!-- Last synced: 2026-01-23 13:33:29 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Gemini as architecture reviewer.
@@ -936,7 +936,7 @@ python -m orchestrator --project my-app --resume
 
 <!-- SHARED: This file applies to ALL agents -->
 <!-- Add new lessons at the TOP of this file -->
-<!-- Version: 1.7 -->
+<!-- Version: 1.8 -->
 <!-- Last Updated: 2026-01-23 -->
 
 ## How to Add a Lesson
@@ -950,6 +950,38 @@ When you discover a bug, mistake, or pattern that should be remembered:
 ---
 
 ## Recent Lessons
+
+### 2026-01-23 - Web Search for Research Agents and HITL User Input
+
+- **Issue**: Research agents relied solely on codebase analysis and training data; workflow interrupts had no interactive CLI for human input
+- **Root Cause**: No web search capability for up-to-date documentation/security advisories; non-interactive mode meant users couldn't respond to escalations
+- **Fix**: Implemented two enhancements:
+  1. **Web Research Agent**: New research agent that searches web for documentation, CVEs, best practices
+     - `ResearchConfig` dataclass with configurable tools (WebSearch, WebFetch, Perplexity MCP)
+     - Basic web tools ON by default (free, built into Claude Code)
+     - Perplexity deep research optional (requires API)
+     - Tool selection based on agent `requires_web` field
+  2. **Interactive HITL CLI**: Rich-based display and input for workflow interrupts
+     - `UserInputManager` routes escalation/approval interrupts
+     - `InterruptDisplay` shows context with panels/tables
+     - `prompt_helpers` module for reusable menu/confirm/text prompts
+     - Auto-detection of interactive mode (TTY check, CI env vars)
+     - Safe defaults for non-interactive (abort/reject)
+- **Prevention**:
+  - Use `ResearchConfig` for web tool configuration
+  - Check `requires_web` field before spawning research agents
+  - Use `UserInputManager.handle_interrupt()` for HITL processing
+  - Test for `is_interactive()` before prompting users
+- **Applies To**: all
+- **Files Changed**:
+  - `orchestrator/config/thresholds.py` - Added ResearchConfig dataclass
+  - `orchestrator/langgraph/nodes/research_phase.py` - Web research agent, tool selection
+  - `orchestrator/agents/prompts/claude_web_research.md` - Web research prompt template
+  - `orchestrator/ui/prompt_helpers.py` - Reusable prompt utilities (new)
+  - `orchestrator/ui/interrupt_display.py` - Rich display components (new)
+  - `orchestrator/ui/input_manager.py` - UserInputManager class (new)
+  - `orchestrator/ui/__init__.py` - Exported new classes
+  - `orchestrator/orchestrator.py` - HITL integration in resume_langgraph()
 
 ### 2026-01-23 - Dynamic Role Dispatch for Task-Aware Agent Selection
 
