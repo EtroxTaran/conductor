@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..state import WorkflowState, PhaseStatus, PhaseState
+from ...agents.prompts import load_prompt, format_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -129,16 +130,24 @@ async def implementation_node(state: WorkflowState) -> dict[str, Any]:
     # Get validation feedback for context
     feedback_section = _build_feedback_section(state)
 
-    # Check for clarification answers from human
-    clarification_answers = _load_clarification_answers(project_dir)
+    # Check for clarification answers from human (from DB)
+    clarification_answers = _load_clarification_answers(state["project_name"])
     if clarification_answers:
         feedback_section += f"\n\nCLARIFICATION ANSWERS FROM HUMAN:\n{json.dumps(clarification_answers, indent=2)}"
         logger.info(f"Including {len(clarification_answers)} clarification answers")
 
-    prompt = IMPLEMENTATION_PROMPT.format(
-        plan=json.dumps(plan, indent=2),
-        feedback_section=feedback_section,
-    )
+    # Load prompt from template with fallback to inline
+    plan_json = json.dumps(plan, indent=2)
+    try:
+        template = load_prompt("claude", "implementation")
+        prompt = format_prompt(template, plan=plan_json, feedback_section=feedback_section)
+        logger.debug("Using external implementation template")
+    except FileNotFoundError:
+        logger.debug("Implementation template not found, using inline prompt")
+        prompt = IMPLEMENTATION_PROMPT.format(
+            plan=plan_json,
+            feedback_section=feedback_section,
+        )
 
     try:
         # Spawn worker Claude with timeout protection
@@ -165,8 +174,8 @@ async def implementation_node(state: WorkflowState) -> dict[str, Any]:
             from ...storage.async_utils import run_async
 
             repo = get_phase_output_repository(state["project_name"])
-            run_async(repo.save(phase=3, output_type="partial_result", content=implementation_result))
-            run_async(repo.save(phase=3, output_type="clarifications_needed", content={"clarifications": clarifications}))
+            run_async(repo.save_output(phase=3, output_type="partial_result", content=implementation_result))
+            run_async(repo.save_output(phase=3, output_type="clarifications_needed", content={"clarifications": clarifications}))
 
             phase_3.status = PhaseStatus.BLOCKED
             phase_status["3"] = phase_3
@@ -199,7 +208,7 @@ async def implementation_node(state: WorkflowState) -> dict[str, Any]:
         from ...storage.async_utils import run_async
 
         repo = get_phase_output_repository(state["project_name"])
-        run_async(repo.save(phase=3, output_type="implementation_result", content=implementation_result))
+        run_async(repo.save_output(phase=3, output_type="implementation_result", content=implementation_result))
 
         # Update phase status
         phase_3.status = PhaseStatus.COMPLETED
@@ -291,25 +300,33 @@ def _extract_clarifications(result: dict) -> list[dict]:
     return clarifications
 
 
-def _load_clarification_answers(project_dir: Path) -> dict:
+def _load_clarification_answers(project_name: str) -> dict:
     """Load any clarification answers from human escalation.
 
     Args:
-        project_dir: Project directory
+        project_name: Project name for DB lookup
 
     Returns:
         Dict of clarification answers, empty if none found
     """
-    answers_file = project_dir / ".workflow" / "clarification_answers.json"
-    if answers_file.exists():
-        try:
-            answers = json.loads(answers_file.read_text())
-            # Remove timestamp from answers dict for cleaner prompt
-            answers.pop("timestamp", None)
-            return answers
-        except json.JSONDecodeError:
+    from ...db.repositories.logs import get_logs_repository
+    from ...storage.async_utils import run_async
+
+    try:
+        repo = get_logs_repository(project_name)
+        logs = run_async(repo.get_by_type("clarification_answers"))
+
+        if not logs:
             return {}
-    return {}
+
+        # Get most recent clarification answers
+        latest = logs[0]
+        answers = latest.get("content", {})
+        # Remove timestamp from answers dict for cleaner prompt
+        answers.pop("timestamp", None)
+        return answers
+    except Exception:
+        return {}
 
 
 def _is_transient_error(error: Exception) -> bool:

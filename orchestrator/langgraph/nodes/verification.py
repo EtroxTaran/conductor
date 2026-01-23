@@ -16,6 +16,7 @@ from ..state import WorkflowState, PhaseStatus, PhaseState, AgentFeedback
 from ...specialists.runner import SpecialistRunner
 from ...review.resolver import ConflictResolver
 from ...config import load_project_config
+from ...agents.prompts import load_prompt, format_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,25 @@ async def cursor_review_node(state: WorkflowState) -> dict[str, Any]:
 
     files_list = "\n".join(f"- {f}" for f in files_changed) if files_changed else "No files specified"
 
-    # Build prompt (instructions are in A07-security-reviewer/CURSOR-RULES.md)
-    prompt = f"""ORIGINAL PLAN:
+    # Get test results if available
+    test_results = impl_result.get("test_results", {})
+    test_results_str = json.dumps(test_results, indent=2) if test_results else "No test results available"
+
+    # Build prompt from template with fallback
+    try:
+        template = load_prompt("cursor", "code_review")
+        prompt = format_prompt(template, files_list=files_list, test_results=test_results_str)
+        logger.debug("Using external cursor code review template")
+    except FileNotFoundError:
+        logger.debug("Cursor code review template not found, using inline prompt")
+        prompt = f"""ORIGINAL PLAN:
 {json.dumps(plan, indent=2)}
 
 FILES IMPLEMENTED:
-{files_list}"""
+{files_list}
+
+TEST RESULTS:
+{test_results_str}"""
 
     try:
         runner = SpecialistRunner(project_dir)
@@ -209,28 +223,6 @@ async def gemini_review_node(state: WorkflowState) -> dict[str, Any]:
             "updated_at": datetime.now().isoformat(),
         }
 
-
-async def review_gate_node(state: WorkflowState) -> dict[str, Any]:
-    """Determine whether to skip reviews based on change risk."""
-    project_dir = Path(state["project_dir"])
-    config = load_project_config(project_dir)
-    policy = getattr(config.workflow, "review_gating", "conservative")
-
-    changed_files = await _collect_changed_files(state, project_dir)
-    docs_only = _is_docs_only_changes(changed_files)
-
-    skip_reviews = False
-    if policy == "conservative":
-        skip_reviews = bool(changed_files) and docs_only
-
-    return {
-        "review_skipped": skip_reviews,
-        "review_skipped_reason": "docs_only" if skip_reviews else None,
-        "review_changed_files": changed_files,
-        "next_decision": "continue",
-        "updated_at": datetime.now().isoformat(),
-    }
-
     # Get list of changed files
     files_changed = []
     if impl_result:
@@ -241,17 +233,24 @@ async def review_gate_node(state: WorkflowState) -> dict[str, Any]:
         files_changed = await _get_changed_files(project_dir)
 
     files_list = "\n".join(f"- {f}" for f in files_changed) if files_changed else "No files specified"
+    plan_json = json.dumps(plan, indent=2)
 
-    # Build prompt (instructions are in A08-code-reviewer/GEMINI.md)
-    prompt = f"""ORIGINAL PLAN:
-{json.dumps(plan, indent=2)}
+    # Build prompt from template with fallback
+    try:
+        template = load_prompt("gemini", "architecture_review")
+        prompt = format_prompt(template, plan=plan_json, files_list=files_list)
+        logger.debug("Using external gemini architecture review template")
+    except FileNotFoundError:
+        logger.debug("Gemini architecture review template not found, using inline prompt")
+        prompt = f"""ORIGINAL PLAN:
+{plan_json}
 
 FILES IMPLEMENTED:
 {files_list}"""
 
     try:
         runner = SpecialistRunner(project_dir)
-        
+
         # Run A08-code-reviewer
         result = await asyncio.to_thread(
             runner.create_agent("A08-code-reviewer").run,
@@ -274,12 +273,12 @@ FILES IMPLEMENTED:
 
         score = float(feedback_data.get("score", 0))
         blocking = feedback_data.get("blocking_issues", [])
-        
+
         # A08 uses "comments" list
         concerns = feedback_data.get("comments", [])
 
         feedback = AgentFeedback(
-            agent="gemini", # Kept as "gemini" for compatibility
+            agent="gemini",  # Kept as "gemini" for compatibility
             approved=feedback_data.get("approved", False) and len(blocking) == 0,
             score=score,
             assessment="approved" if feedback_data.get("approved") else "needs_changes",
@@ -321,6 +320,28 @@ FILES IMPLEMENTED:
                 "timestamp": datetime.now().isoformat(),
             }],
         }
+
+
+async def review_gate_node(state: WorkflowState) -> dict[str, Any]:
+    """Determine whether to skip reviews based on change risk."""
+    project_dir = Path(state["project_dir"])
+    config = load_project_config(project_dir)
+    policy = getattr(config.workflow, "review_gating", "conservative")
+
+    changed_files = await _collect_changed_files(state, project_dir)
+    docs_only = _is_docs_only_changes(changed_files)
+
+    skip_reviews = False
+    if policy == "conservative":
+        skip_reviews = bool(changed_files) and docs_only
+
+    return {
+        "review_skipped": skip_reviews,
+        "review_skipped_reason": "docs_only" if skip_reviews else None,
+        "review_changed_files": changed_files,
+        "next_decision": "continue",
+        "updated_at": datetime.now().isoformat(),
+    }
 
 
 async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
@@ -389,7 +410,7 @@ async def verification_fan_in_node(state: WorkflowState) -> dict[str, Any]:
     from ...db.repositories.phase_outputs import get_phase_output_repository
     from ...storage.async_utils import run_async
     repo = get_phase_output_repository(state["project_name"])
-    run_async(repo.save(phase=4, output_type="consolidated", content=consolidated))
+    run_async(repo.save_output(phase=4, output_type="consolidated", content=consolidated))
 
     if result.approved:
         phase_4.status = PhaseStatus.COMPLETED

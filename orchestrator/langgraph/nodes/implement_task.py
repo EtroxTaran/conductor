@@ -26,6 +26,7 @@ from ..state import (
     TaskIndex,
     get_task_by_id,
 )
+from ...agents.prompts import load_prompt, format_prompt
 from ..integrations.ralph_loop import (
     RalphLoopConfig,
     run_ralph_loop,
@@ -1032,22 +1033,47 @@ def build_scoped_prompt(task: Task) -> str:
     Returns:
         Scoped prompt string
     """
-    return SCOPED_TASK_PROMPT.format(
-        task_id=task.get("id", "unknown"),
-        description=task.get("description", task.get("title", "Unknown task")),
-        acceptance_criteria="\n".join(
-            f"- {c}" for c in task.get("acceptance_criteria", [])
-        ) or "- No specific criteria defined",
-        files_to_create="\n".join(
-            f"- {f}" for f in task.get("files_to_create", [])
-        ) or "- None",
-        files_to_modify="\n".join(
-            f"- {f}" for f in task.get("files_to_modify", [])
-        ) or "- None",
-        test_files="\n".join(
-            f"- {f}" for f in task.get("test_files", [])
-        ) or "- None",
-    )
+    task_id = task.get("id", "unknown")
+    title = task.get("title", "Unknown task")
+    description = task.get("description", title)
+    acceptance_criteria = task.get("acceptance_criteria", [])
+    files_to_create = task.get("files_to_create", [])
+    files_to_modify = task.get("files_to_modify", [])
+    test_files = task.get("test_files", [])
+
+    # Try to load external template with fallback to inline
+    try:
+        template = load_prompt("claude", "task")
+        prompt = format_prompt(
+            template,
+            task_id=task_id,
+            title=title,
+            description=description,
+            acceptance_criteria=acceptance_criteria or ["No specific criteria defined"],
+            files_to_create=files_to_create or ["None"],
+            files_to_modify=files_to_modify or ["None"],
+            test_files=test_files or ["None"],
+        )
+        logger.debug("Using external task template")
+        return prompt
+    except FileNotFoundError:
+        logger.debug("Task template not found, using inline prompt")
+        return SCOPED_TASK_PROMPT.format(
+            task_id=task_id,
+            description=description,
+            acceptance_criteria="\n".join(
+                f"- {c}" for c in acceptance_criteria
+            ) or "- No specific criteria defined",
+            files_to_create="\n".join(
+                f"- {f}" for f in files_to_create
+            ) or "- None",
+            files_to_modify="\n".join(
+                f"- {f}" for f in files_to_modify
+            ) or "- None",
+            test_files="\n".join(
+                f"- {f}" for f in test_files
+            ) or "- None",
+        )
 
 
 def build_full_prompt(task: Task, state: Optional[WorkflowState] = None) -> str:
@@ -1360,7 +1386,7 @@ def _save_clarification_request(project_dir: Path, task_id: str, request: dict, 
         "timestamp": datetime.now().isoformat(),
     }
     repo = get_logs_repository(project_name)
-    run_async(repo.save(LogType.ERROR, request_data, task_id=task_id))
+    run_async(repo.create_log(LogType.ERROR, request_data, task_id=task_id))
 
 
 def _save_task_result(project_dir: Path, task_id: str, result: dict, project_name: str) -> None:
