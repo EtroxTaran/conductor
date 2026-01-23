@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -124,6 +125,9 @@ class SessionManager:
         self.sessions_dir = self.project_dir / (sessions_dir or DEFAULT_SESSIONS_DIR)
         self.session_ttl_hours = session_ttl_hours
 
+        # Thread safety lock for _sessions dict access
+        self._lock = threading.Lock()
+
         # In-memory cache of active sessions
         self._sessions: dict[str, SessionInfo] = {}
 
@@ -145,7 +149,8 @@ class SessionManager:
                     session_file.unlink(missing_ok=True)
                     continue
 
-                self._sessions[session.task_id] = session
+                with self._lock:
+                    self._sessions[session.task_id] = session
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 logger.warning(f"Failed to load session {session_file}: {e}")
 
@@ -169,18 +174,22 @@ class SessionManager:
         Returns:
             SessionInfo if session exists and is active, None otherwise
         """
-        session = self._sessions.get(task_id)
-        if session is None:
-            return None
+        with self._lock:
+            session = self._sessions.get(task_id)
+            if session is None:
+                return None
 
-        if not session.is_active:
-            return None
+            if not session.is_active:
+                return None
 
-        if self._is_expired(session):
-            self.close_session(task_id)
-            return None
+            if self._is_expired(session):
+                # Mark as inactive (close_session logic inlined to avoid deadlock)
+                session.is_active = False
+                self._save_session(session)
+                logger.info(f"Closed expired session for task {task_id}")
+                return None
 
-        return session
+            return session
 
     def create_session(
         self,
@@ -200,23 +209,26 @@ class SessionManager:
         Returns:
             New SessionInfo
         """
-        # Close any existing session
-        if task_id in self._sessions:
-            self.close_session(task_id)
+        with self._lock:
+            # Close any existing session (inlined to avoid deadlock)
+            existing = self._sessions.get(task_id)
+            if existing is not None:
+                existing.is_active = False
+                self._save_session(existing)
 
-        # Generate session ID if not provided
-        if session_id is None:
-            session_id = self._generate_session_id(task_id)
+            # Generate session ID if not provided
+            if session_id is None:
+                session_id = self._generate_session_id(task_id)
 
-        session = SessionInfo(
-            session_id=session_id,
-            task_id=task_id,
-            project_dir=str(self.project_dir),
-            metadata=metadata or {},
-        )
+            session = SessionInfo(
+                session_id=session_id,
+                task_id=task_id,
+                project_dir=str(self.project_dir),
+                metadata=metadata or {},
+            )
 
-        self._sessions[task_id] = session
-        self._save_session(session)
+            self._sessions[task_id] = session
+            self._save_session(session)
 
         logger.info(f"Created session {session_id} for task {task_id}")
         return session
@@ -251,14 +263,15 @@ class SessionManager:
         Returns:
             True if session was updated, False if not found
         """
-        session = self._sessions.get(task_id)
-        if session is None:
-            return False
+        with self._lock:
+            session = self._sessions.get(task_id)
+            if session is None:
+                return False
 
-        session.last_used_at = datetime.now()
-        session.iteration += 1
-        self._save_session(session)
-        return True
+            session.last_used_at = datetime.now()
+            session.iteration += 1
+            self._save_session(session)
+            return True
 
     def close_session(self, task_id: str) -> bool:
         """Close a session (mark inactive).
@@ -271,12 +284,13 @@ class SessionManager:
         Returns:
             True if session was closed, False if not found
         """
-        session = self._sessions.get(task_id)
-        if session is None:
-            return False
+        with self._lock:
+            session = self._sessions.get(task_id)
+            if session is None:
+                return False
 
-        session.is_active = False
-        self._save_session(session)
+            session.is_active = False
+            self._save_session(session)
 
         logger.info(f"Closed session for task {task_id}")
         return True
@@ -290,9 +304,10 @@ class SessionManager:
         Returns:
             True if deleted, False if not found
         """
-        session = self._sessions.pop(task_id, None)
-        if session is None:
-            return False
+        with self._lock:
+            session = self._sessions.pop(task_id, None)
+            if session is None:
+                return False
 
         session_file = self.sessions_dir / f"{task_id}.json"
         session_file.unlink(missing_ok=True)
@@ -365,10 +380,11 @@ class SessionManager:
             match = re.search(pattern, output)
             if match:
                 session_id = match.group(1)
-                session = self.get_session(task_id)
-                if session and session.session_id != session_id:
-                    session.session_id = session_id
-                    self._save_session(session)
+                with self._lock:
+                    session = self._sessions.get(task_id)
+                    if session and session.is_active and session.session_id != session_id:
+                        session.session_id = session_id
+                        self._save_session(session)
                 return session_id
 
         return None
@@ -379,11 +395,14 @@ class SessionManager:
         Returns:
             Number of sessions cleaned up
         """
-        expired = []
-        for task_id, session in self._sessions.items():
-            if self._is_expired(session) or not session.is_active:
-                expired.append(task_id)
+        # Get list of expired task IDs under lock
+        with self._lock:
+            expired = [
+                task_id for task_id, session in self._sessions.items()
+                if self._is_expired(session) or not session.is_active
+            ]
 
+        # Delete each expired session (delete_session handles its own locking)
         for task_id in expired:
             self.delete_session(task_id)
 
@@ -401,7 +420,8 @@ class SessionManager:
         Returns:
             List of sessions
         """
-        sessions = list(self._sessions.values())
+        with self._lock:
+            sessions = list(self._sessions.values())
         if not include_inactive:
             sessions = [s for s in sessions if s.is_active]
         return sorted(sessions, key=lambda s: s.last_used_at, reverse=True)

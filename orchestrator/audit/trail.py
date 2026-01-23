@@ -234,7 +234,13 @@ class AuditTrail:
             self.audit_dir.mkdir(parents=True, exist_ok=True)
 
     def _generate_entry_id(self) -> str:
-        """Generate unique entry ID."""
+        """Generate unique entry ID.
+
+        Note: This method must be called with self._lock held to ensure
+        thread-safe counter increments. If called without lock protection,
+        duplicate or skipped IDs may occur.
+        """
+        # Counter increment is protected by self._lock (caller must hold lock)
         self._entry_counter += 1
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         return f"audit-{timestamp}-{self._entry_counter:04d}"
@@ -272,8 +278,12 @@ class AuditTrail:
         Returns:
             New AuditEntry to track the invocation
         """
+        # Generate entry ID under lock to ensure thread-safe counter increment
+        with self._lock:
+            entry_id = self._generate_entry_id()
+
         entry = AuditEntry(
-            id=self._generate_entry_id(),
+            id=entry_id,
             timestamp=datetime.now().isoformat(),
             agent=agent,
             task_id=task_id,

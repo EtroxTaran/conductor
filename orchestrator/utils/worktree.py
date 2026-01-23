@@ -168,55 +168,57 @@ class WorktreeManager:
         suffix = suffix or str(uuid.uuid4())[:8]
         worktree_path = self.project_dir.parent / f"{self.project_dir.name}-worker-{suffix}"
 
-        # Don't create if it already exists
-        if worktree_path.exists():
-            raise WorktreeError(
-                f"Worktree path '{worktree_path}' already exists. "
-                "Use a different suffix or cleanup existing worktrees."
-            )
-
         worktree_created = False
-        try:
-            # Create worktree at HEAD
-            result = subprocess.run(
-                ["git", "worktree", "add", str(worktree_path), "HEAD"],
-                cwd=str(self.project_dir),
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            worktree_created = True
 
-            commit = self._get_current_commit()
-            info = WorktreeInfo(
-                path=worktree_path,
-                suffix=suffix,
-                commit=commit,
-            )
-            with self._lock:
+        # Use lock to prevent race condition between exists() check and creation
+        with self._lock:
+            # Don't create if it already exists
+            if worktree_path.exists():
+                raise WorktreeError(
+                    f"Worktree path '{worktree_path}' already exists. "
+                    "Use a different suffix or cleanup existing worktrees."
+                )
+
+            try:
+                # Create worktree at HEAD
+                result = subprocess.run(
+                    ["git", "worktree", "add", str(worktree_path), "HEAD"],
+                    cwd=str(self.project_dir),
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                worktree_created = True
+
+                commit = self._get_current_commit()
+                info = WorktreeInfo(
+                    path=worktree_path,
+                    suffix=suffix,
+                    commit=commit,
+                )
                 self.worktrees.append(info)
 
-            logger.info(f"Created worktree at {worktree_path} (commit: {commit[:8]})")
-            return worktree_path
+                logger.info(f"Created worktree at {worktree_path} (commit: {commit[:8]})")
+                return worktree_path
 
-        except subprocess.CalledProcessError as e:
-            raise WorktreeError(
-                f"Failed to create worktree: {e.stderr}"
-            ) from e
-        except Exception as e:
-            # Clean up orphaned worktree if creation succeeded but setup failed
-            if worktree_created and worktree_path.exists():
-                logger.warning(f"Cleaning up orphaned worktree after setup failure: {worktree_path}")
-                try:
-                    subprocess.run(
-                        ["git", "worktree", "remove", "--force", str(worktree_path)],
-                        cwd=str(self.project_dir),
-                        capture_output=True,
-                        check=False,  # Don't raise if cleanup fails
-                    )
-                except Exception:
-                    pass  # Best-effort cleanup
-            raise WorktreeError(f"Failed to setup worktree: {e}") from e
+            except subprocess.CalledProcessError as e:
+                raise WorktreeError(
+                    f"Failed to create worktree: {e.stderr}"
+                ) from e
+            except Exception as e:
+                # Clean up orphaned worktree if creation succeeded but setup failed
+                if worktree_created and worktree_path.exists():
+                    logger.warning(f"Cleaning up orphaned worktree after setup failure: {worktree_path}")
+                    try:
+                        subprocess.run(
+                            ["git", "worktree", "remove", "--force", str(worktree_path)],
+                            cwd=str(self.project_dir),
+                            capture_output=True,
+                            check=False,  # Don't raise if cleanup fails
+                        )
+                    except Exception:
+                        pass  # Best-effort cleanup
+                raise WorktreeError(f"Failed to setup worktree: {e}") from e
 
     def remove_worktree(self, worktree_path: Path, force: bool = False) -> bool:
         """Remove a single worktree.

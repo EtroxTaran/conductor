@@ -20,6 +20,125 @@ from ...specialists.runner import SpecialistRunner
 logger = logging.getLogger(__name__)
 
 
+class PlanValidationError(Exception):
+    """Raised when plan validation fails."""
+
+    def __init__(self, message: str, errors: list[str]):
+        super().__init__(message)
+        self.errors = errors
+
+
+def validate_plan(plan: dict) -> None:
+    """Validate the structure of a generated plan.
+
+    Ensures the plan has all required fields with proper types to prevent
+    downstream failures from malformed plans.
+
+    Args:
+        plan: The parsed plan dictionary
+
+    Raises:
+        PlanValidationError: If validation fails with list of specific errors
+    """
+    errors: list[str] = []
+
+    # Required top-level fields
+    required_fields = ["plan_name", "tasks"]
+    for field in required_fields:
+        if field not in plan:
+            errors.append(f"Missing required field: '{field}'")
+
+    # Validate plan_name
+    if "plan_name" in plan:
+        if not isinstance(plan["plan_name"], str):
+            errors.append("'plan_name' must be a string")
+        elif len(plan["plan_name"].strip()) == 0:
+            errors.append("'plan_name' cannot be empty")
+
+    # Validate tasks array
+    if "tasks" in plan:
+        if not isinstance(plan["tasks"], list):
+            errors.append("'tasks' must be an array")
+        elif len(plan["tasks"]) == 0:
+            errors.append("'tasks' array cannot be empty")
+        else:
+            # Validate each task
+            for i, task in enumerate(plan["tasks"]):
+                task_errors = _validate_task(task, i)
+                errors.extend(task_errors)
+
+    # Validate optional milestones array if present
+    if "milestones" in plan:
+        if not isinstance(plan["milestones"], list):
+            errors.append("'milestones' must be an array")
+        else:
+            for i, milestone in enumerate(plan["milestones"]):
+                if not isinstance(milestone, dict):
+                    errors.append(f"Milestone {i}: must be an object")
+                elif "id" not in milestone:
+                    errors.append(f"Milestone {i}: missing 'id' field")
+
+    if errors:
+        raise PlanValidationError(
+            f"Plan validation failed with {len(errors)} error(s)",
+            errors
+        )
+
+
+def _validate_task(task: dict, index: int) -> list[str]:
+    """Validate a single task in the plan.
+
+    Args:
+        task: The task dictionary
+        index: Task index for error messages
+
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors: list[str] = []
+    prefix = f"Task {index}"
+
+    if not isinstance(task, dict):
+        return [f"{prefix}: must be an object"]
+
+    # Required task fields
+    required_task_fields = ["id", "title"]
+    for field in required_task_fields:
+        if field not in task:
+            errors.append(f"{prefix}: missing required field '{field}'")
+
+    # Validate id
+    if "id" in task:
+        if not isinstance(task["id"], str):
+            errors.append(f"{prefix}: 'id' must be a string")
+        elif len(task["id"].strip()) == 0:
+            errors.append(f"{prefix}: 'id' cannot be empty")
+
+    # Validate title
+    if "title" in task:
+        if not isinstance(task["title"], str):
+            errors.append(f"{prefix}: 'title' must be a string")
+        elif len(task["title"].strip()) == 0:
+            errors.append(f"{prefix}: 'title' cannot be empty")
+
+    # Validate acceptance_criteria if present (should be a list)
+    if "acceptance_criteria" in task:
+        if not isinstance(task["acceptance_criteria"], list):
+            errors.append(f"{prefix}: 'acceptance_criteria' must be an array")
+
+    # Validate file lists if present
+    for field in ["files_to_create", "files_to_modify", "test_files"]:
+        if field in task and not isinstance(task[field], list):
+            errors.append(f"{prefix}: '{field}' must be an array")
+
+    # Validate dependencies if present
+    if "dependencies" in task:
+        if not isinstance(task["dependencies"], list):
+            errors.append(f"{prefix}: 'dependencies' must be an array")
+
+    return errors
+
+
 async def planning_node(state: WorkflowState) -> dict[str, Any]:
     """Generate implementation plan from specification.
 
@@ -103,6 +222,13 @@ TASK GRANULARITY REMINDER:
                 plan = json.loads(json_match.group(0))
             else:
                 raise Exception("Could not parse plan from response")
+
+        # Validate plan structure before accepting
+        try:
+            validate_plan(plan)
+        except PlanValidationError as e:
+            error_details = "\n  - ".join(e.errors)
+            raise Exception(f"Plan validation failed:\n  - {error_details}") from e
 
         # Save plan to database
         from ...db.repositories.phase_outputs import get_phase_output_repository, OutputType
