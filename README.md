@@ -78,7 +78,7 @@ Conductor solves the coordination problem for AI-assisted development by orchest
 | **Iterative Refinement** | Automatic feedback loops until quality thresholds are met |
 | **TDD Enforcement** | Tests written before implementation in Phase 3 |
 | **Git Integration** | Auto-commits after each phase with rollback capability |
-| **State Persistence** | Resume interrupted workflows from any phase |
+| **State Persistence** | SurrealDB stores workflow state, audit logs, and metrics |
 
 ---
 
@@ -88,7 +88,7 @@ The orchestration system uses **LangGraph** for graph-based workflow management 
 
 ### Workflow Graph
 
-The architecture uses modular subgraphs for complex logic encapsulation:
+The architecture uses modular subgraphs (`task_graph`, `fixer_graph`) for complex logic encapsulation:
 
 ```
 ┌──────────────────┐

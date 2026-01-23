@@ -157,7 +157,7 @@ class TestHandoffGenerator:
         brief = generator.generate()
 
         # Mock state uses 'test_project' as project name
-    assert brief.project == "test_project"
+        assert brief.project == "test_project"
         assert brief.current_phase == 1
         assert brief.next_action != ""
 
@@ -172,7 +172,7 @@ class TestHandoffGenerator:
 
         # With mocked DB, project comes from directory name
         # Mock state uses 'test_project' as project name
-    assert brief.project == "test_project"
+        assert brief.project == "test_project"
         # Mock returns default current_phase=1
         assert brief.current_phase == 1
         assert brief.next_action is not None

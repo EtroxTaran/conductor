@@ -1,7 +1,6 @@
 """Tests for fixer diagnosis engine."""
 
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 
 from orchestrator.fixer.diagnosis import (
@@ -82,28 +81,12 @@ class TestDiagnosisResult:
         assert len(result.suggested_fixes) > 0 or result.root_cause != RootCause.UNKNOWN
 
 
-@pytest.fixture
-def mock_llm_diagnosis():
-    """Mock LLM diagnosis engine."""
-    with patch("orchestrator.fixer.diagnosis.LLMDiagnosisEngine") as MockClass:
-        mock_instance = MockClass.return_value
-        # Default behavior: pass through what we give it or standard mocks
-        mock_instance.diagnose = AsyncMock()
-        yield mock_instance
-
-
 @pytest.mark.asyncio
 class TestDiagnosisEngineSyntaxErrors:
     """Tests for diagnosing syntax errors."""
 
-    async def test_diagnose_syntax_error_basic(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_syntax_error_basic(self, tmp_path):
         """Diagnose basic syntax error."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.SYNTAX_ERROR,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.SYNTAX_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -116,14 +99,8 @@ class TestDiagnosisEngineSyntaxErrors:
         assert result.root_cause == RootCause.SYNTAX_ERROR
         assert result.confidence in (DiagnosisConfidence.HIGH, DiagnosisConfidence.MEDIUM)
 
-    async def test_diagnose_syntax_error_missing_paren(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_syntax_error_missing_paren(self, tmp_path):
         """Diagnose unclosed bracket error."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.UNCLOSED_BRACKET,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.SYNTAX_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e2",
@@ -140,14 +117,8 @@ class TestDiagnosisEngineSyntaxErrors:
 class TestDiagnosisEngineImportErrors:
     """Tests for diagnosing import errors."""
 
-    async def test_diagnose_missing_module(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_missing_module(self, tmp_path):
         """Diagnose missing module import."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.MISSING_IMPORT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.IMPORT_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -159,14 +130,8 @@ class TestDiagnosisEngineImportErrors:
         assert result.root_cause == RootCause.MISSING_IMPORT
         assert result.confidence == DiagnosisConfidence.HIGH
 
-    async def test_diagnose_import_from_error(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_import_from_error(self, tmp_path):
         """Diagnose import-from error."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.MISSING_IMPORT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.IMPORT_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e2",
@@ -182,14 +147,8 @@ class TestDiagnosisEngineImportErrors:
 class TestDiagnosisEngineTestFailures:
     """Tests for diagnosing test failures."""
 
-    async def test_diagnose_assertion_error(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_assertion_error(self, tmp_path):
         """Diagnose assertion failure."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.ASSERTION_MISMATCH,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.TEST_FAILURE,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -200,26 +159,20 @@ class TestDiagnosisEngineTestFailures:
         result = await engine.diagnose(error, ErrorCategory.TEST_FAILURE)
         assert result.root_cause == RootCause.ASSERTION_MISMATCH
 
-    async def test_diagnose_test_with_traceback(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_test_with_traceback(self, tmp_path):
         """Diagnose test failure with full traceback."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.ASSERTION_MISMATCH,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.TEST_FAILURE,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e2",
             message="FAILED tests/test_math.py::test_add",
             error_type="TestFailure",
             source="pytest",
-            stack_trace='''
+            stack_trace="""
                 def test_add():
                     result = add(2, 3)
             >       assert result == 6
             E       AssertionError: assert 5 == 6
-            ''',
+            """,
         )
         result = await engine.diagnose(error, ErrorCategory.TEST_FAILURE)
         assert result.root_cause == RootCause.ASSERTION_MISMATCH
@@ -229,14 +182,8 @@ class TestDiagnosisEngineTestFailures:
 class TestDiagnosisEngineConfigurationErrors:
     """Tests for diagnosing configuration errors."""
 
-    async def test_diagnose_missing_env_var(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_missing_env_var(self, tmp_path):
         """Diagnose missing environment variable."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.MISSING_ENV_VAR,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.CONFIG_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -247,14 +194,8 @@ class TestDiagnosisEngineConfigurationErrors:
         result = await engine.diagnose(error, ErrorCategory.CONFIG_ERROR)
         assert result.root_cause == RootCause.MISSING_ENV_VAR
 
-    async def test_diagnose_invalid_config(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_invalid_config(self, tmp_path):
         """Diagnose invalid configuration."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.INVALID_CONFIG,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.CONFIG_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e2",
@@ -271,14 +212,8 @@ class TestDiagnosisEngineConfigurationErrors:
 class TestDiagnosisEngineTimeoutErrors:
     """Tests for diagnosing timeout errors."""
 
-    async def test_diagnose_timeout(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_timeout(self, tmp_path):
         """Diagnose timeout error."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.TIMEOUT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.TIMEOUT_ERROR,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -294,14 +229,8 @@ class TestDiagnosisEngineTimeoutErrors:
 class TestDiagnosisEngineSecurityErrors:
     """Tests for diagnosing security-related errors."""
 
-    async def test_diagnose_sql_injection(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_sql_injection(self, tmp_path):
         """Diagnose SQL injection vulnerability."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.VULNERABILITY,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.SECURITY_VULNERABILITY,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -312,14 +241,8 @@ class TestDiagnosisEngineSecurityErrors:
         result = await engine.diagnose(error, ErrorCategory.SECURITY_VULNERABILITY)
         assert result.root_cause == RootCause.VULNERABILITY
 
-    async def test_diagnose_xss(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_xss(self, tmp_path):
         """Diagnose XSS vulnerability."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.VULNERABILITY,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.SECURITY_VULNERABILITY,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e2",
@@ -336,14 +259,8 @@ class TestDiagnosisEngineSecurityErrors:
 class TestDiagnosisEngineUnknownErrors:
     """Tests for diagnosing unknown errors."""
 
-    async def test_diagnose_unknown(self, tmp_path, mock_llm_diagnosis):
+    async def test_diagnose_unknown(self, tmp_path):
         """Unknown errors get UNKNOWN root cause."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.UNKNOWN,
-            confidence=DiagnosisConfidence.LOW,
-            category=ErrorCategory.UNKNOWN,
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -360,15 +277,8 @@ class TestDiagnosisEngineUnknownErrors:
 class TestDiagnosisEngineContextUsage:
     """Tests for context usage in diagnosis."""
 
-    async def test_uses_current_task_context(self, tmp_path, mock_llm_diagnosis):
+    async def test_uses_current_task_context(self, tmp_path):
         """Diagnosis uses current task from workflow state."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.MISSING_IMPORT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.IMPORT_ERROR,
-            context={"current_task_id": "T1"},
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -383,15 +293,8 @@ class TestDiagnosisEngineContextUsage:
         result = await engine.diagnose(error, ErrorCategory.IMPORT_ERROR, workflow_state)
         assert result.context.get("current_task_id") == "T1"
 
-    async def test_uses_recent_changes(self, tmp_path, mock_llm_diagnosis):
+    async def test_uses_recent_changes(self, tmp_path):
         """Diagnosis includes error context."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.SYNTAX_ERROR,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.SYNTAX_ERROR,
-            context={"error_context": {"file": "main.py"}},
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -408,15 +311,8 @@ class TestDiagnosisEngineContextUsage:
 class TestDiagnosisEngineAffectedFiles:
     """Tests for extracting affected files."""
 
-    async def test_extracts_file_from_traceback(self, tmp_path, mock_llm_diagnosis):
+    async def test_extracts_file_from_traceback(self, tmp_path):
         """Extract file location from Python traceback."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.IMPORT_ERROR,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.IMPORT_ERROR,
-            affected_files=[AffectedFile(path="src/app.py")],
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -430,15 +326,8 @@ class TestDiagnosisEngineAffectedFiles:
         paths = [f.path for f in result.affected_files]
         assert any("app.py" in p for p in paths) or len(result.affected_files) == 0
 
-    async def test_extracts_line_number(self, tmp_path, mock_llm_diagnosis):
+    async def test_extracts_line_number(self, tmp_path):
         """Extract line number from error."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.UNKNOWN,
-            confidence=DiagnosisConfidence.LOW,
-            category=ErrorCategory.UNKNOWN,
-            affected_files=[AffectedFile(path="main.py", line_number=123)],
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -456,15 +345,8 @@ class TestDiagnosisEngineAffectedFiles:
 class TestDiagnosisEngineSuggestedFixes:
     """Tests for suggested fixes generation."""
 
-    async def test_import_error_suggests_install(self, tmp_path, mock_llm_diagnosis):
+    async def test_import_error_suggests_install(self, tmp_path):
         """Import error suggests package installation."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.MISSING_IMPORT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.IMPORT_ERROR,
-            suggested_fixes=["Install the package", "Fix import path"],
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",
@@ -477,15 +359,8 @@ class TestDiagnosisEngineSuggestedFixes:
         fix_text = " ".join(result.suggested_fixes).lower()
         assert "install" in fix_text or "import" in fix_text
 
-    async def test_timeout_suggests_increase(self, tmp_path, mock_llm_diagnosis):
+    async def test_timeout_suggests_increase(self, tmp_path):
         """Timeout suggests increasing timeout."""
-        mock_llm_diagnosis.diagnose.return_value = DiagnosisResult(
-            error=MagicMock(),
-            root_cause=RootCause.TIMEOUT,
-            confidence=DiagnosisConfidence.HIGH,
-            category=ErrorCategory.TIMEOUT_ERROR,
-            suggested_fixes=["Increase timeout", "Optimize code"],
-        )
         engine = DiagnosisEngine(tmp_path)
         error = FixerError(
             error_id="e1",

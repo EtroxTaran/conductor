@@ -23,25 +23,6 @@ import {
   WorkflowRollbackResponseDto,
 } from './dto';
 
-@Controller('api/projects/:projectName/workflow') // Fixed path to match structure better or keep as is?
-// Original was 'api/projects/:projectName' and methods had 'status', 'health', etc.
-// But 'graph' is also under workflow.
-// Wait, the original controller had @Controller('api/projects/:projectName') and methods 'status', 'health', 'start'.
-// I should stick to that or move 'graph' to 'workflow/graph'.
-// The frontend expects /api/projects/:projectName/workflow/graph? No, frontend api.ts says:
-// `/projects/${projectName}/workflow/graph` -> this maps to `api/projects/:projectName/workflow/graph`.
-// So I should put it in WorkflowController.
-
-// Check original controller path: @Controller('api/projects/:projectName')
-// So `status` -> `api/projects/:projectName/status`
-// Wait, `orchestrator-api` has `/projects/{project_name}/workflow/status`.
-// NestJS `WorkflowController` has `@Controller('api/projects/:projectName')` and `@Get('status')`.
-// So it exposes `/api/projects/:projectName/status`.
-// BUT frontend calls `workflowApi.getStatus` -> `/projects/${projectName}/status` (relative to /api).
-// So `/api/projects/:projectName/status`.
-// The frontend `getGraph` is not yet defined in the `api.ts` I read (it was missing).
-// I should add `getGraph` to `WorkflowController` mapped to `workflow/graph` to match `orchestrator-api` structure or just `graph`.
-// Let's stick to `graph` to be consistent with `status`.
 @Controller('api/projects/:projectName')
 @ApiTags('workflow')
 export class WorkflowController {

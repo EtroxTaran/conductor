@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import subprocess
+import nest_asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import Enum
@@ -21,6 +22,9 @@ from typing import Any, AsyncGenerator, Optional, List, Dict
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Apply nest_asyncio to allow nested event loops (critical for mixing sync/async)
+nest_asyncio.apply()
 
 # Add orchestrator to path
 CONDUCTOR_ROOT = Path(__file__).parent.parent
@@ -383,7 +387,7 @@ async def websocket_endpoint(websocket: WebSocket, project_name: str):
 
 
 @app.get("/projects", response_model=list[ProjectSummary])
-async def list_projects() -> list[ProjectSummary]:
+def list_projects() -> list[ProjectSummary]:
     """List all projects."""
     pm = get_project_manager()
     projects = pm.list_projects()
@@ -391,7 +395,7 @@ async def list_projects() -> list[ProjectSummary]:
 
 
 @app.get("/projects/{project_name}", response_model=ProjectStatusResponse)
-async def get_project(project_name: str) -> ProjectStatusResponse:
+def get_project(project_name: str) -> ProjectStatusResponse:
     """Get detailed project status."""
     pm = get_project_manager()
     status = pm.get_project_status(project_name)
@@ -401,7 +405,7 @@ async def get_project(project_name: str) -> ProjectStatusResponse:
 
 
 @app.post("/projects/{project_name}/init", response_model=InitProjectResponse)
-async def init_project(project_name: str) -> InitProjectResponse:
+def init_project(project_name: str) -> InitProjectResponse:
     """Initialize a new project."""
     pm = get_project_manager()
     result = pm.init_project(project_name)
@@ -411,7 +415,7 @@ async def init_project(project_name: str) -> InitProjectResponse:
 
 
 @app.delete("/projects/{project_name}")
-async def delete_project(
+def delete_project(
     project_name: str,
     remove_source: bool = Query(default=False),
 ) -> dict:
@@ -471,7 +475,7 @@ async def get_workflow_status(project_name: str) -> WorkflowStatusResponse:
 
 
 @app.get("/projects/{project_name}/workflow/health", response_model=WorkflowHealthResponse)
-async def get_workflow_health(project_name: str) -> WorkflowHealthResponse:
+def get_workflow_health(project_name: str) -> WorkflowHealthResponse:
     """Get workflow health status."""
     project_dir = get_project_dir(project_name)
     orchestrator = Orchestrator(project_dir, console_output=False)
@@ -480,7 +484,7 @@ async def get_workflow_health(project_name: str) -> WorkflowHealthResponse:
 
 
 @app.get("/projects/{project_name}/workflow/graph")
-async def get_workflow_graph(project_name: str) -> dict:
+def get_workflow_graph(project_name: str) -> dict:
     """Get workflow graph definition."""
     project_dir = get_project_dir(project_name)
     orchestrator = Orchestrator(project_dir, console_output=False)
@@ -568,7 +572,7 @@ async def resume_workflow(
 
 
 @app.post("/projects/{project_name}/workflow/rollback/{phase}")
-async def rollback_workflow(project_name: str, phase: int) -> dict:
+def rollback_workflow(project_name: str, phase: int) -> dict:
     """Rollback workflow to a previous phase."""
     if phase < 1 or phase > 5:
         raise HTTPException(status_code=400, detail="Phase must be between 1 and 5")
@@ -584,7 +588,7 @@ async def rollback_workflow(project_name: str, phase: int) -> dict:
 
 
 @app.post("/projects/{project_name}/workflow/reset")
-async def reset_workflow(project_name: str) -> dict:
+def reset_workflow(project_name: str) -> dict:
     """Reset workflow state."""
     project_dir = get_project_dir(project_name)
     orchestrator = Orchestrator(project_dir, console_output=False)
@@ -596,7 +600,7 @@ async def reset_workflow(project_name: str) -> dict:
 
 
 @app.get("/projects/{project_name}/tasks", response_model=TaskListResponse)
-async def get_tasks(project_name: str) -> TaskListResponse:
+def get_tasks(project_name: str) -> TaskListResponse:
     """Get tasks for a project."""
     project_dir = get_project_dir(project_name)
 
@@ -647,7 +651,7 @@ async def get_tasks(project_name: str) -> TaskListResponse:
 
 
 @app.get("/projects/{project_name}/tasks/{task_id}", response_model=TaskInfo)
-async def get_task(project_name: str, task_id: str) -> TaskInfo:
+def get_task(project_name: str, task_id: str) -> TaskInfo:
     """Get details for a specific task."""
     project_dir = get_project_dir(project_name)
     state_file = project_dir / ".workflow" / "state.json"
@@ -682,7 +686,7 @@ async def get_task(project_name: str, task_id: str) -> TaskInfo:
 
 
 @app.get("/projects/{project_name}/tasks/{task_id}/history", response_model=AuditResponse)
-async def get_task_history(
+def get_task_history(
     project_name: str, 
     task_id: str,
     limit: int = Query(default=100, ge=1, le=1000)
@@ -722,7 +726,7 @@ async def get_task_history(
 
 
 @app.get("/projects/{project_name}/budget", response_model=BudgetStatus)
-async def get_budget(project_name: str) -> BudgetStatus:
+def get_budget(project_name: str) -> BudgetStatus:
     """Get budget status for a project."""
     project_dir = get_project_dir(project_name)
     bm = BudgetManager(project_dir)
@@ -730,7 +734,7 @@ async def get_budget(project_name: str) -> BudgetStatus:
 
 
 @app.get("/projects/{project_name}/budget/report", response_model=BudgetReportResponse)
-async def get_budget_report(project_name: str) -> BudgetReportResponse:
+def get_budget_report(project_name: str) -> BudgetReportResponse:
     """Get detailed budget report."""
     project_dir = get_project_dir(project_name)
     bm = BudgetManager(project_dir)
@@ -744,7 +748,7 @@ async def get_budget_report(project_name: str) -> BudgetReportResponse:
 
 
 @app.get("/projects/{project_name}/audit", response_model=AuditResponse)
-async def get_audit(
+def get_audit(
     project_name: str,
     agent: Optional[str] = None,
     task_id: Optional[str] = None,
@@ -795,7 +799,7 @@ async def get_audit(
 
 
 @app.get("/projects/{project_name}/audit/statistics", response_model=AuditStatistics)
-async def get_audit_statistics(
+def get_audit_statistics(
     project_name: str,
     since_hours: Optional[int] = None
 ) -> AuditStatistics:
@@ -827,7 +831,7 @@ async def get_audit_statistics(
 
 
 @app.get("/projects/{project_name}/agents", response_model=list[AgentStatus])
-async def get_agents(project_name: str) -> list[AgentStatus]:
+def get_agents(project_name: str) -> list[AgentStatus]:
     """Get agent statuses for a project."""
     project_dir = get_project_dir(project_name)
     audit_storage = get_audit_storage(project_dir)
@@ -864,7 +868,7 @@ async def get_agents(project_name: str) -> list[AgentStatus]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+def chat(request: ChatRequest) -> ChatResponse:
     """Execute a chat request (single shot)."""
     cwd = CONDUCTOR_ROOT
     if request.project_name:
@@ -889,7 +893,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 
 @app.post("/chat/command", response_model=CommandResponse)
-async def execute_command(request: CommandRequest) -> CommandResponse:
+def execute_command(request: CommandRequest) -> CommandResponse:
     """Execute a Claude command."""
     cwd = CONDUCTOR_ROOT
     if request.project_name:

@@ -249,21 +249,4 @@ python scripts/db-cli.py stats -p project-name
 2. Check source JSON files exist
 3. Ensure target database is empty or backup first
 
-## Graceful Fallback
 
-The integration is designed to fall back gracefully:
-
-```python
-from orchestrator.db import is_surrealdb_enabled
-
-if is_surrealdb_enabled():
-    # Use SurrealDB
-    from orchestrator.db import get_audit_repository
-    audit = get_audit_repository(project_name)
-else:
-    # Use file-based storage
-    from orchestrator.audit import AuditTrail
-    audit = AuditTrail(project_dir)
-```
-
-Your existing JSON-based workflow continues to work even without SurrealDB configured.

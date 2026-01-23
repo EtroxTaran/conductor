@@ -6,9 +6,9 @@
 
 | **Document Info** | |
 |-------------------|---|
-| Version | 4.0 |
-| Last Updated | 2026-01-22 |
-| Test Coverage | 1,250+ tests passing |
+| Version | 4.1 |
+| Last Updated | 2026-01-23 |
+| Test Coverage | 1,600+ tests passing |
 | Codebase | ~20,000 lines of Python |
 | License | Proprietary |
 
@@ -722,8 +722,6 @@ conductor/                     # OUTER LAYER (Orchestrator)
 
 ```
 .workflow/
-├── state.json                    # Current workflow state
-├── checkpoints.db                # LangGraph checkpoints (SQLite)
 ├── coordination.log              # Plain text logs
 ├── coordination.jsonl            # JSON logs for analysis
 ├── escalations/                  # Escalation requests
@@ -1361,6 +1359,7 @@ conductor/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 4.1 | 2026-01-23 | Storage decoupled to SurrealDB, modular subgraphs |
 | 4.0 | 2026-01-22 | Added Universal Agent Loop, updated test count to 1,250+ |
 | 3.0 | 2026-01-21 | Added parallel workers, external projects, file boundaries |
 | 2.0 | 2026-01-21 | Added LangGraph workflow, task-based execution |
