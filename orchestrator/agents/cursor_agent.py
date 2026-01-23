@@ -1,9 +1,11 @@
 """Cursor CLI agent wrapper."""
 
+import json
 from pathlib import Path
 from typing import Optional
 
 from .base import BaseAgent
+from .prompts import load_prompt, format_prompt
 
 
 # Available Cursor models
@@ -115,7 +117,13 @@ class CursorAgent(BaseAgent):
         Returns:
             AgentResult with validation feedback
         """
-        prompt = f"""You are a senior code reviewer validating an implementation plan.
+        try:
+            template = load_prompt("cursor", "validation")
+            plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
+            prompt = format_prompt(template, plan=plan_str)
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are a senior code reviewer validating an implementation plan.
 
 PLAN TO REVIEW:
 {plan}
@@ -176,8 +184,18 @@ Focus on:
             AgentResult with code review
         """
         files_list = "\n".join(f"- {f}" for f in files_changed)
+        test_results_str = json.dumps(test_results, indent=2) if isinstance(test_results, dict) else str(test_results)
 
-        prompt = f"""You are a senior code reviewer performing a detailed code review.
+        try:
+            template = load_prompt("cursor", "code_review")
+            prompt = format_prompt(
+                template,
+                files_list=files_list,
+                test_results=test_results_str,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are a senior code reviewer performing a detailed code review.
 
 FILES TO REVIEW:
 {files_list}

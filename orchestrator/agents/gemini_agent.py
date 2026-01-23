@@ -1,9 +1,11 @@
 """Gemini CLI agent wrapper."""
 
+import json
 from pathlib import Path
 from typing import Optional
 
 from .base import BaseAgent
+from .prompts import load_prompt, format_prompt
 
 
 # Available Gemini models
@@ -101,7 +103,13 @@ class GeminiAgent(BaseAgent):
         Returns:
             AgentResult with validation feedback
         """
-        prompt = f"""You are a senior software architect validating an implementation plan.
+        try:
+            template = load_prompt("gemini", "validation")
+            plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
+            prompt = format_prompt(template, plan=plan_str)
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are a senior software architect validating an implementation plan.
 
 PLAN TO REVIEW:
 {plan}
@@ -168,8 +176,18 @@ Focus on:
             AgentResult with architecture review
         """
         files_list = "\n".join(f"- {f}" for f in files_changed)
+        plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
 
-        prompt = f"""You are a senior software architect reviewing an implementation.
+        try:
+            template = load_prompt("gemini", "architecture_review")
+            prompt = format_prompt(
+                template,
+                plan=plan_str,
+                files_list=files_list,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are a senior software architect reviewing an implementation.
 
 ORIGINAL PLAN:
 {plan}

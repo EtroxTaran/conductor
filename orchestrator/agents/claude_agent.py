@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 from .base import BaseAgent, AgentResult
+from .prompts import load_prompt, format_prompt
 
 if TYPE_CHECKING:
     from ..storage import SessionStorageAdapter
@@ -328,7 +329,12 @@ class ClaudeAgent(BaseAgent):
         Returns:
             AgentResult with the plan
         """
-        prompt = f"""You are a senior software architect. Analyze the following product specification and create a detailed implementation plan.
+        try:
+            template = load_prompt("claude", "planning")
+            prompt = format_prompt(template, product_spec=product_spec)
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are a senior software architect. Analyze the following product specification and create a detailed implementation plan.
 
 PRODUCT SPECIFICATION:
 {product_spec}
@@ -431,7 +437,16 @@ FEEDBACK TO ADDRESS:
                     else:
                         files_to_create.append(f)
 
-        prompt = f"""You are implementing a software feature based on an approved plan.
+        try:
+            template = load_prompt("claude", "implementation")
+            prompt = format_prompt(
+                template,
+                plan=json.dumps(plan, indent=2),
+                feedback_section=feedback_section,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""You are implementing a software feature based on an approved plan.
 
 IMPLEMENTATION PLAN:
 {json.dumps(plan, indent=2)}
@@ -511,7 +526,21 @@ At the end, provide a summary:
         acceptance_criteria = task.get("acceptance_criteria", [])
         estimated_complexity = task.get("estimated_complexity")
 
-        prompt = f"""## Task: {task_id} - {title}
+        try:
+            template = load_prompt("claude", "task")
+            prompt = format_prompt(
+                template,
+                task_id=task_id,
+                title=title,
+                description=description,
+                acceptance_criteria=acceptance_criteria,
+                files_to_create=files_to_create,
+                files_to_modify=files_to_modify,
+                test_files=test_files,
+            )
+        except FileNotFoundError:
+            # Fallback to inline prompt if template not found
+            prompt = f"""## Task: {task_id} - {title}
 
 {description}
 
