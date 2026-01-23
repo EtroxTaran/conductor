@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from ..config.models import GEMINI_MODELS, DEFAULT_GEMINI_MODEL
+from ..config.models import GEMINI_MODELS, DEFAULT_GEMINI_MODEL, DEFAULT_ARCHITECT_MODEL
 from .base import BaseAgent
 from .prompts import load_prompt, format_prompt
 
@@ -157,7 +157,7 @@ Focus on:
 4. Long-term maintainability
 5. Alternative approaches that might be better"""
 
-        return self.run(prompt, output_file=output_file)
+        return self.run(prompt, output_file=output_file, model=DEFAULT_ARCHITECT_MODEL)
 
     def run_architecture_review(
         self,
@@ -246,4 +246,4 @@ Focus on:
 4. Scalability potential
 5. Technical debt introduced"""
 
-        return self.run(prompt, output_file=output_file)
+        return self.run(prompt, output_file=output_file, model=DEFAULT_ARCHITECT_MODEL)

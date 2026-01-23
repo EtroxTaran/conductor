@@ -29,7 +29,8 @@ from typing import Any, Optional
 from ..config.models import (
     CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL,
     GEMINI_MODELS, DEFAULT_GEMINI_MODEL,
-    CURSOR_MODELS, DEFAULT_CURSOR_MODEL
+    CURSOR_MODELS, DEFAULT_CURSOR_MODEL,
+    get_role_assignment
 )
 
 logger = logging.getLogger(__name__)
@@ -787,7 +788,15 @@ def get_agent_for_task(
             except ValueError:
                 agent_type = default_agent
         else:
-            agent_type = default_agent
+            # Dynamic Role Dispatch: Infer agent from task
+            try:
+                role_assignment = get_role_assignment(task)
+                agent_type = AgentType(role_assignment.primary_agent)
+                if not default_model:  # Only override if not set
+                    default_model = role_assignment.model
+            except Exception as e:
+                logger.warning(f"Error in dynamic role dispatch: {e}")
+                agent_type = default_agent
 
     # Model selection
     model = env_model or task.get("model") or default_model

@@ -22,7 +22,7 @@ Research confirms the following state-of-the-art models are available as of Jan 
 
 ## 3. Implementation Steps
 
-### Phase 1: Centralized Configuration
+### Phase 1: Centralized Configuration (Completed)
 **Goal:** Eliminate "Configuration Drift" between Python adapters and Shell scripts.
 
 1.  **Create `orchestrator/config/models.py`**
@@ -37,7 +37,7 @@ Research confirms the following state-of-the-art models are available as of Jan 
 3.  **Update Shell Scripts**
     *   Update `scripts/call-gemini.sh` and `scripts/call-cursor.sh` to accept model arguments more flexibly or read from a shared `.env` / config generation step.
 
-### Phase 2: Dynamic Role Dispatch (Future)
+### Phase 2: Dynamic Role Dispatch (Completed)
 **Goal:** Assign the best agent for the specific type of task.
 
 *   **Logic:**
@@ -45,7 +45,7 @@ Research confirms the following state-of-the-art models are available as of Jan 
     *   IF `task_type == "security"` THEN `reviewer = cursor (gpt-5.2-codex)`
     *   IF `task_type == "optimization"` THEN `reviewer = claude-4-5-opus`
 
-### Phase 3: Enhanced Feedback Injection
+### Phase 3: Enhanced Feedback Injection (Completed)
 **Goal:** Ensure review feedback effectively guides the Planner/Implementer.
 
 1.  **Modify `validation_fan_in_node` (Phase 2)**
@@ -56,6 +56,12 @@ Research confirms the following state-of-the-art models are available as of Jan 
 2.  **Modify `verification_fan_in_node` (Phase 4)**
     *   Similar logic for code review failures.
     *   Pass specific lint/security errors back to the `fix_bug` node context.
+
+### Status: COMPLETED
+All sections (1-3) have been implemented and verified.
+- Configuration is centralized in `orchestrator/config/models.py`.
+- Dynamic role dispatch is active in `adapter.py`.
+- Enhanced feedback is implemented in `validation.py` and `verification.py`.
 
 ## 4. Verification Plan
 
