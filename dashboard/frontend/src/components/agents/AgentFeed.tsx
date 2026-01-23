@@ -2,15 +2,23 @@
  * Agent activity feed component
  */
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Eye } from 'lucide-react';
 import { agentsApi } from '@/lib/api';
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   ScrollArea,
   Separator,
 } from '@/components/ui';
@@ -61,9 +69,9 @@ function AgentCard({ agent }: { agent: AgentStatus }) {
   );
 }
 
-function AuditEntryRow({ entry }: { entry: AuditEntry }) {
+function AuditEntryRow({ entry, onSelect }: { entry: AuditEntry; onSelect: (entry: AuditEntry) => void }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b">
+    <div className="flex items-center justify-between py-2 border-b hover:bg-muted/50 transition-colors px-2 rounded-sm cursor-pointer" onClick={() => onSelect(entry)}>
       <div className="flex items-center space-x-3">
         <Badge variant="secondary" className="text-xs">
           {getAgentName(entry.agent)}
@@ -82,12 +90,17 @@ function AuditEntryRow({ entry }: { entry: AuditEntry }) {
         )}
         {entry.cost_usd !== undefined && <span>{formatCost(entry.cost_usd)}</span>}
         {entry.timestamp && <span>{formatDate(entry.timestamp)}</span>}
+        <Button variant="ghost" size="icon" className="h-6 w-6">
+          <Eye className="h-3 w-3" />
+        </Button>
       </div>
     </div>
   );
 }
 
 export function AgentFeed({ projectName }: AgentFeedProps) {
+  const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
+
   const { data: agentStatus } = useQuery({
     queryKey: ['agents', projectName],
     queryFn: () => agentsApi.getStatus(projectName),
@@ -117,12 +130,12 @@ export function AgentFeed({ projectName }: AgentFeedProps) {
       <Card>
         <CardHeader>
           <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest agent invocations</CardDescription>
+          <CardDescription>Latest agent invocations (Click for details)</CardDescription>
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[300px]">
             {entries.map((entry) => (
-              <AuditEntryRow key={entry.id} entry={entry} />
+              <AuditEntryRow key={entry.id} entry={entry} onSelect={setSelectedEntry} />
             ))}
             {entries.length === 0 && (
               <p className="text-sm text-muted-foreground">No activity yet</p>
@@ -130,6 +143,62 @@ export function AgentFeed({ projectName }: AgentFeedProps) {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      <Dialog open={selectedEntry !== null} onOpenChange={(open) => { if (!open) setSelectedEntry(null); }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Audit Entry Details</DialogTitle>
+            <DialogDescription>
+              Task: {selectedEntry?.task_id} | Agent: {selectedEntry?.agent ? getAgentName(selectedEntry.agent) : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-auto py-4">
+            {selectedEntry && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="font-semibold block">Status</span>
+                    <Badge variant={selectedEntry.status === 'success' ? 'success' : 'destructive'}>
+                      {selectedEntry.status}
+                    </Badge>
+                  </div>
+                  <div>
+                    <span className="font-semibold block">Duration</span>
+                    {formatDuration(selectedEntry.duration_seconds || 0)}
+                  </div>
+                  <div>
+                    <span className="font-semibold block">Cost</span>
+                    {formatCost(selectedEntry.cost_usd || 0)}
+                  </div>
+                  <div>
+                    <span className="font-semibold block">Timestamp</span>
+                    {selectedEntry.timestamp ? formatDate(selectedEntry.timestamp) : '-'}
+                  </div>
+                </div>
+
+                {selectedEntry.command_args && selectedEntry.command_args.length > 0 && (
+                  <div>
+                    <span className="font-semibold block mb-1">Command</span>
+                    <pre className="bg-muted p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap">
+                      {selectedEntry.command_args.join(' ')}
+                    </pre>
+                  </div>
+                )}
+
+                {selectedEntry.metadata && Object.keys(selectedEntry.metadata).length > 0 && (
+                  <div>
+                    <span className="font-semibold block mb-1">Metadata</span>
+                    <pre className="bg-muted p-2 rounded text-xs overflow-x-auto">
+                      {JSON.stringify(selectedEntry.metadata, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

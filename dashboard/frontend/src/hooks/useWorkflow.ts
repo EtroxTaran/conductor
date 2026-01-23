@@ -64,7 +64,7 @@ export function useResumeWorkflow(projectName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (autonomous = false) => workflowApi.resume(projectName, autonomous),
+    mutationFn: (autonomous: boolean = false) => workflowApi.resume(projectName, autonomous),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workflowKeys.status(projectName) });
       queryClient.invalidateQueries({ queryKey: workflowKeys.health(projectName) });

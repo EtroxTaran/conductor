@@ -12,7 +12,7 @@ import {
   CardTitle,
   ScrollArea,
 } from '@/components/ui';
-import { cn, getStatusColor, formatDuration } from '@/lib/utils';
+import { cn, getStatusColor } from '@/lib/utils';
 import type { TaskInfo } from '@/types';
 
 interface TaskBoardProps {

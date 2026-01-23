@@ -3,7 +3,7 @@
  */
 
 import { useParams } from '@tanstack/react-router';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Pause } from 'lucide-react';
 import {
   useProject,
   useWorkflowStatus,
@@ -11,6 +11,7 @@ import {
   useTasks,
   useWebSocket,
   useResumeWorkflow,
+  usePauseWorkflow,
 } from '@/hooks';
 import {
   Badge,
@@ -19,7 +20,7 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+
   Progress,
   Separator,
   Tabs,
@@ -45,9 +46,10 @@ export function ProjectDashboard() {
   const { data: health } = useWorkflowHealth(name);
   const { data: tasks } = useTasks(name);
   const resumeWorkflow = useResumeWorkflow(name);
+  const pauseWorkflow = usePauseWorkflow(name);
 
   // Connect to WebSocket for real-time updates
-  const { isConnected, lastEvent } = useWebSocket(name);
+  const { isConnected } = useWebSocket(name);
 
   if (projectLoading || statusLoading) {
     return (
@@ -97,13 +99,24 @@ export function ProjectDashboard() {
         </div>
         <div className="flex items-center space-x-2">
           {status?.status === 'paused' && (
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               onClick={() => resumeWorkflow.mutate(false)}
               disabled={resumeWorkflow.isPending}
             >
               <RefreshCw className={cn("h-4 w-4 mr-2", resumeWorkflow.isPending && "animate-spin")} />
               Resume
+            </Button>
+          )}
+          {status?.status === 'in_progress' && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => pauseWorkflow.mutate()}
+              disabled={pauseWorkflow.isPending}
+            >
+              <Pause className={cn("h-4 w-4 mr-2", pauseWorkflow.isPending && "animate-spin")} />
+              Pause
             </Button>
           )}
           {status?.status !== 'in_progress' && status?.status !== 'paused' && (
@@ -116,8 +129,8 @@ export function ProjectDashboard() {
                 health.status === 'healthy'
                   ? 'text-green-600 border-green-600'
                   : health.status === 'degraded'
-                  ? 'text-yellow-600 border-yellow-600'
-                  : 'text-red-600 border-red-600'
+                    ? 'text-yellow-600 border-yellow-600'
+                    : 'text-red-600 border-red-600'
               )}
             >
               {health.status}

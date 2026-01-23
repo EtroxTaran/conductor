@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { FolderOpen, Plus, Play, RefreshCw } from 'lucide-react';
+import { FolderOpen, Plus, RefreshCw } from 'lucide-react';
 import { useProjects, useInitProject } from '@/hooks';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Badge } from '@/components/ui';
 import { cn, formatDate, getStatusColor, getPhaseName } from '@/lib/utils';

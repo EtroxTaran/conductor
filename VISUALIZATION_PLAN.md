@@ -41,13 +41,14 @@ Manage interruptions and manual inputs.
 - [x] **UI Feedback**: Added visual indicators for "Input Required".
 
 ### Phase 5: Advanced UX ("The Extra Mile") 🚧
-- [ ] **"Time-Travel" Debugger**: Rollback endpoint exists, UI slider pending.
-- [ ] **"Agent Whisperer" Mode**: Metrics streaming enabled, `AgentFeed` can be enhanced.
+- [x] **"Time-Travel" Debugger**: Rollback endpoint exists, UI slider implemented.
+- [x] **"Agent Whisperer" Mode**: AgentFeed enhanced with detailed audit views.
 - [ ] **Predictive Paths**: Graph shows all conditional paths.
 
 ---
 
 ## Next Steps
-- Implement Time-Travel Slider using `useRollbackWorkflow`.
-- Enhance `AgentFeed` to show raw token streams if desired.
-- Add "Stop" button functionality.
+- [x] Implement Time-Travel Slider using `useRollbackWorkflow`.
+- [x] Enhance `AgentFeed` to show detailed views.
+- [x] Add "Stop" button functionality.
+- [ ] Implement Predictive/Active path highlighting.

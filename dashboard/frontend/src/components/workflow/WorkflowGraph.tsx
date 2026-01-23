@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -9,13 +9,11 @@ import {
   Edge,
   Position,
   MarkerType,
-  ConnectionLineType,
   useReactFlow,
   ReactFlowProvider,
 } from '@xyflow/react';
 import dagre from 'dagre';
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
 import { useWebSocket } from '@/hooks';
 import { Loader2 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
@@ -68,7 +66,7 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => 
 };
 
 // Custom Node Component
-const WorkflowNode = ({ data, selected }: any) => {
+const WorkflowNode = ({ data }: any) => {
   const isActive = data.status === 'active';
   const isCompleted = data.status === 'completed';
   const isError = data.status === 'error';
@@ -103,8 +101,8 @@ const nodeTypes = {
 };
 
 function WorkflowGraphInner({ projectName }: { projectName: string }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const { fitView } = useReactFlow();
 
   // Fetch graph definition
@@ -143,7 +141,7 @@ function WorkflowGraphInner({ projectName }: { projectName: string }) {
       const layout = getLayoutedElements(initialNodes, initialEdges);
       setNodes(layout.nodes);
       setEdges(layout.edges);
-      
+
       // Initial fit after short delay to allow layout
       setTimeout(() => fitView(), 100);
     }

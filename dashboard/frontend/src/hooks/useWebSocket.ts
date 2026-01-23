@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createWebSocket } from '@/lib/api';
 import type { WebSocketEvent } from '@/types';
-import { projectKeys } from './useProjects';
+
 import { workflowKeys } from './useWorkflow';
 import { taskKeys } from './useTasks';
 
