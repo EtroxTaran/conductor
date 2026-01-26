@@ -1,0 +1,77 @@
+# Development override - run with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Or simply: docker compose -f docker-compose.dev.yml up (includes base by default)
+
+services:
+  # =============================================================================
+  # SurrealDB - Same as production but exposed for debugging
+  # =============================================================================
+  surrealdb:
+    image: surrealdb/surrealdb:v2.1.4
+    container_name: conductor-surrealdb-dev
+    command: start --user root --pass root --log debug rocksdb:/data/conductor.db
+    ports:
+      - "8001:8000"
+    volumes:
+      - surrealdb-data-dev:/data
+    networks:
+      - conductor-network-dev
+
+  # =============================================================================
+  # Backend API - Development mode with hot reload
+  # =============================================================================
+  backend:
+    build:
+      context: ./dashboard/backend
+      dockerfile: Dockerfile.dev
+    container_name: conductor-backend-dev
+    ports:
+      - "8080:8080"
+    environment:
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=8080
+      - DASHBOARD_DEBUG=true
+      - DASHBOARD_RELOAD=true
+      - DASHBOARD_SURREALDB_URL=ws://surrealdb:8000/rpc
+      - DASHBOARD_SURREALDB_NAMESPACE=conductor
+      - DASHBOARD_SURREALDB_DATABASE=dashboard
+      - DASHBOARD_CORS_ORIGINS=["http://localhost:3000","http://localhost:5173","http://127.0.0.1:5173"]
+      - DASHBOARD_CONDUCTOR_ROOT=/app/conductor
+      - DASHBOARD_PROJECTS_DIR=/app/projects
+    volumes:
+      # Hot reload - mount source code
+      - ./dashboard/backend/app:/app/app
+      - ./orchestrator:/app/conductor/orchestrator:ro
+      - ./projects:/app/projects
+    depends_on:
+      - surrealdb
+    networks:
+      - conductor-network-dev
+
+  # =============================================================================
+  # Frontend - Development with Vite dev server (not nginx)
+  # =============================================================================
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile.dev
+    container_name: conductor-frontend-dev
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    volumes:
+      # Hot reload - mount source code
+      - ./dashboard/frontend/src:/app/src
+      - ./dashboard/frontend/public:/app/public
+    depends_on:
+      - backend
+    networks:
+      - conductor-network-dev
+
+volumes:
+  surrealdb-data-dev:
+    driver: local
+
+networks:
+  conductor-network-dev:
+    driver: bridge

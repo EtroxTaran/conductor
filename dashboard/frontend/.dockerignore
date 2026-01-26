@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Testing
+coverage/
+e2e/
+playwright-report/
+test-results/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development
+.env
+.env.local
+*.log
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+.vite/

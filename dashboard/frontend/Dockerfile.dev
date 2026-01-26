@@ -1,0 +1,22 @@
+# Conductor Dashboard Frontend - Development
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source (will be overwritten by volume mount)
+COPY . .
+
+# Expose Vite dev server port
+EXPOSE 5173
+
+# Environment for development
+ENV NODE_ENV=development
+
+# Start Vite dev server with host binding for Docker
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

@@ -1,50 +1,94 @@
-version: "3.8"
-
 services:
+  # =============================================================================
+  # SurrealDB - State persistence for workflow, tasks, and phase outputs
+  # =============================================================================
   surrealdb:
     image: surrealdb/surrealdb:v2.1.4
     container_name: conductor-surrealdb
-    user: "0:0"  # Run as root inside container
     command: start --user root --pass root rocksdb:/data/conductor.db
     ports:
       - "8001:8000"
     volumes:
       - surrealdb-data:/data
     restart: unless-stopped
-    # Health check disabled - SurrealDB image doesn't include curl/nc
-    # Verify connectivity via: curl http://localhost:8001/health
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'SELECT 1' | /surreal sql --conn ws://localhost:8000 --user root --pass root --ns test --db test 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - conductor-network
 
-  orchestrator-api:
-    build:
-      context: .
-      dockerfile: orchestrator-api/Dockerfile
-    container_name: conductor-orchestrator-api
-    ports:
-      - "8090:8090"
-    volumes:
-      - ./projects:/app/projects
-      - ./orchestrator:/app/orchestrator:ro
-    environment:
-      - ORCHESTRATOR_API_PORT=8090
-      - SURREAL_URL=ws://surrealdb:8000/rpc
-    depends_on:
-      - surrealdb
-    restart: unless-stopped
-
+  # =============================================================================
+  # Backend API - FastAPI dashboard backend
+  # =============================================================================
   backend:
     build:
-      context: ./dashboard/backend-nestjs
+      context: ./dashboard/backend
       dockerfile: Dockerfile
     container_name: conductor-backend
     ports:
-      - "8081:8080"
+      - "8080:8080"
     environment:
-      - NODE_ENV=production
-      - PORT=8080
-      - ORCHESTRATOR_API_URL=http://orchestrator-api:8090
+      # Server settings
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=8080
+      - DASHBOARD_DEBUG=false
+      # SurrealDB connection
+      - DASHBOARD_SURREALDB_URL=ws://surrealdb:8000/rpc
+      - DASHBOARD_SURREALDB_NAMESPACE=conductor
+      - DASHBOARD_SURREALDB_DATABASE=dashboard
+      # CORS - allow frontend
+      - DASHBOARD_CORS_ORIGINS=["http://localhost:3000","http://localhost:80","http://frontend:80"]
+      # Paths
+      - DASHBOARD_CONDUCTOR_ROOT=/app/conductor
+      - DASHBOARD_PROJECTS_DIR=/app/projects
+    volumes:
+      # Mount conductor root (read-only for safety)
+      - ./:/app/conductor:ro
+      # Mount projects directory (read-write for workflow state)
+      - ./projects:/app/projects
     depends_on:
-      - orchestrator-api
+      surrealdb:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - conductor-network
+
+  # =============================================================================
+  # Frontend - React dashboard UI
+  # =============================================================================
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+    container_name: conductor-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - conductor-network
 
 volumes:
   surrealdb-data:
+    driver: local
+
+networks:
+  conductor-network:
+    driver: bridge
