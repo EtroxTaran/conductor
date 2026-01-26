@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
@@ -16,10 +16,46 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Debug mode")
     reload: bool = Field(default=False, description="Auto-reload on changes")
 
+    # Authentication settings
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key for authentication (set DASHBOARD_API_KEY)",
+    )
+    skip_auth_in_debug: bool = Field(
+        default=False,
+        description="Skip authentication in debug mode",
+    )
+
     # CORS settings
     cors_origins: list[str] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"],
         description="Allowed CORS origins",
+    )
+    cors_allow_methods: list[str] = Field(
+        default=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        description="Allowed CORS methods",
+    )
+    cors_allow_headers: list[str] = Field(
+        default=["Content-Type", "Authorization", "X-API-Key", "X-Request-ID"],
+        description="Allowed CORS headers",
+    )
+    cors_max_age: int = Field(
+        default=600,
+        description="CORS preflight cache max age in seconds",
+    )
+
+    # Rate limiting settings
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable rate limiting",
+    )
+    rate_limit_per_minute: int = Field(
+        default=60,
+        description="Maximum requests per minute per client",
+    )
+    rate_limit_per_second: int = Field(
+        default=10,
+        description="Maximum requests per second per client",
     )
 
     # Conductor settings
@@ -73,13 +109,12 @@ class Settings(BaseSettings):
     # Environment
     node_env: str = Field(default="development", description="Node environment")
 
-    class Config:
-        """Pydantic config."""
-
-        env_prefix = "DASHBOARD_"
-        env_file = ".env"
-        case_sensitive = False
-        extra = "ignore"
+    model_config = ConfigDict(
+        env_prefix="DASHBOARD_",
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 # Global settings instance

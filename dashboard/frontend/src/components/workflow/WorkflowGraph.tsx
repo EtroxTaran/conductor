@@ -31,6 +31,9 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, Guidance } from "@/components/ui";
 
+// Delay before fitting view after layout (allows React Flow to initialize)
+const FITVIEW_DELAY_MS = 100;
+
 // Icons for phases
 const PhaseIcons: Record<string, React.ReactNode> = {
   planning: <BrainCircuit className="h-5 w-5" />,
@@ -51,9 +54,32 @@ const PhaseDescriptions: Record<string, string> = {
   default: "Working on your project...",
 };
 
+interface GraphNodeData {
+  label?: string;
+  status?: string;
+}
+
+interface GraphEdgeData {
+  label?: string;
+  condition?: string;
+}
+
+interface GraphNodeDefinition {
+  id: string;
+  type?: string;
+  data: GraphNodeData;
+}
+
+interface GraphEdgeDefinition {
+  source: string;
+  target: string;
+  type?: string;
+  data?: GraphEdgeData;
+}
+
 interface GraphDefinition {
-  nodes: Array<{ id: string; type?: string; data: any }>;
-  edges: Array<{ source: string; target: string; type?: string; data?: any }>;
+  nodes: GraphNodeDefinition[];
+  edges: GraphEdgeDefinition[];
 }
 
 const getStatusColor = (status: string) => {
@@ -71,7 +97,14 @@ const getStatusColor = (status: string) => {
   }
 };
 
-const WorkflowNode = ({ data }: any) => {
+interface WorkflowNodeProps {
+  data: {
+    label: string;
+    status?: string;
+  };
+}
+
+const WorkflowNode = ({ data }: WorkflowNodeProps) => {
   const status = data.status || "idle";
   const label = data.label.toLowerCase();
 
@@ -159,7 +192,14 @@ const WorkflowNode = ({ data }: any) => {
   );
 };
 
-const RouterNode = ({ data }: any) => {
+interface RouterNodeProps {
+  data: {
+    label?: string;
+    status?: string;
+  };
+}
+
+const RouterNode = ({ data }: RouterNodeProps) => {
   const status = data.status;
   const isActive = status === "active" || status === "visiting";
 
@@ -292,29 +332,36 @@ const WorkflowGraphInner = React.memo(function WorkflowGraphInner({
   // Initialize graph
   useEffect(() => {
     if (graphData) {
-      const initialNodes: Node[] = graphData.nodes.map((n: any) => ({
-        id: n.id,
-        type: n.type || "default", // Helper for router types
-        data: { label: n.data.label || n.id, status: n.data.status || "idle" },
-        position: { x: 0, y: 0 },
-      }));
+      const initialNodes: Node[] = graphData.nodes.map(
+        (n: GraphNodeDefinition) => ({
+          id: n.id,
+          type: n.type || "default", // Helper for router types
+          data: {
+            label: n.data.label || n.id,
+            status: n.data.status || "idle",
+          },
+          position: { x: 0, y: 0 },
+        }),
+      );
 
-      const initialEdges: Edge[] = graphData.edges.map((e: any, i: number) => ({
-        id: `e-${e.source}-${e.target}-${i}`,
-        source: e.source,
-        target: e.target,
-        type: "smoothstep",
-        animated: false, // Default not animated
-        label: e.data?.label, // Show label
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: { stroke: "#94a3b8", opacity: 1 },
-      }));
+      const initialEdges: Edge[] = graphData.edges.map(
+        (e: GraphEdgeDefinition, i: number) => ({
+          id: `e-${e.source}-${e.target}-${i}`,
+          source: e.source,
+          target: e.target,
+          type: "smoothstep",
+          animated: false, // Default not animated
+          label: e.data?.label, // Show label
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: { stroke: "#94a3b8", opacity: 1 },
+        }),
+      );
 
       const layout = getLayoutedElements(initialNodes, initialEdges);
       setNodes(layout.nodes);
       setEdges(layout.edges);
 
-      setTimeout(() => fitView(), 100);
+      setTimeout(() => fitView(), FITVIEW_DELAY_MS);
     }
   }, [graphData, setNodes, setEdges, fitView]);
 
@@ -401,7 +448,7 @@ const WorkflowGraphInner = React.memo(function WorkflowGraphInner({
   }
 
   return (
-    <div className="h-[600px] w-full border rounded-lg bg-background/50 backdrop-blur-sm relative">
+    <div className="h-[400px] sm:h-[500px] lg:h-[600px] w-full border rounded-lg bg-background/50 backdrop-blur-sm relative touch-none">
       <div className="absolute top-4 right-4 z-10">
         <Guidance
           content={

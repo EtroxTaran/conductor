@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import { useParams } from "@tanstack/react-router";
+import { ErrorBoundary } from "react-error-boundary";
 import { RefreshCw, Pause, GitBranch, GitCommit, Activity } from "lucide-react";
 import {
   useProject,
@@ -28,6 +29,8 @@ import {
   TabsList,
   TabsTrigger,
   AlertBanner,
+  InlineErrorFallback,
+  Breadcrumb,
 } from "@/components/ui";
 import { StartWorkflowDialog } from "@/components/workflow/StartWorkflowDialog";
 import { PhaseProgress } from "@/components/workflow/PhaseProgress";
@@ -39,6 +42,8 @@ import { ChatPanel } from "@/components/chat/ChatPanel";
 import { ErrorPanel } from "@/components/errors/ErrorPanel";
 import { JourneyPanel } from "@/components/workflow/JourneyPanel";
 import { ViewRequestDialog } from "@/components/workflow/ViewRequestDialog";
+import { ProjectGuardrailsPage } from "@/components/collection/ProjectGuardrailsPage";
+import { GitPanel } from "@/components/git/GitPanel";
 import { cn, getStatusColor, getPhaseName } from "@/lib/utils";
 
 export function ProjectDashboard() {
@@ -63,8 +68,15 @@ export function ProjectDashboard() {
 
   if (projectLoading || statusLoading) {
     return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div
+        className="flex items-center justify-center h-[50vh]"
+        role="status"
+        aria-label="Loading project"
+      >
+        <RefreshCw
+          className="h-8 w-8 animate-spin text-muted-foreground"
+          aria-hidden="true"
+        />
       </div>
     );
   }
@@ -94,10 +106,16 @@ export function ProjectDashboard() {
 
   return (
     <div className="space-y-8 animate-fade-in-up">
+      {/* Breadcrumb Navigation */}
+      <Breadcrumb
+        items={[{ label: project.name, current: true }]}
+        className="mb-2"
+      />
+
       {/* Header Area */}
       <div className="flex flex-col gap-6">
         {/* Top Bar */}
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">
@@ -223,7 +241,7 @@ export function ProjectDashboard() {
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card className="bg-gradient-to-br from-card to-secondary/30">
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
@@ -342,24 +360,32 @@ export function ProjectDashboard() {
             <TabsTrigger value="budget" className="rounded-sm">
               Budget
             </TabsTrigger>
+            <TabsTrigger value="guardrails" className="rounded-sm">
+              Guardrails
+            </TabsTrigger>
             <TabsTrigger value="chat" className="rounded-sm">
               Chat
             </TabsTrigger>
             <TabsTrigger value="errors" className="rounded-sm">
               Errors
             </TabsTrigger>
+            <TabsTrigger value="git" className="rounded-sm">
+              Git
+            </TabsTrigger>
           </TabsList>
         </div>
 
         <div className="min-h-[500px] border rounded-lg bg-card/50 backdrop-blur-sm p-1">
           <TabsContent value="graph" className="m-0 h-full p-4">
-            <div className="flex gap-4 h-[600px]">
+            <div className="flex flex-col lg:flex-row gap-4 h-[600px]">
               {/* Main Graph Area */}
-              <div className="flex-1">
-                <WorkflowGraph projectName={name} />
+              <div className="flex-1 min-h-[300px]">
+                <ErrorBoundary FallbackComponent={InlineErrorFallback}>
+                  <WorkflowGraph projectName={name} />
+                </ErrorBoundary>
               </div>
               {/* Journey Panel Sidebar */}
-              <div className="w-[320px] shrink-0">
+              <div className="w-full lg:w-[320px] lg:shrink-0">
                 <JourneyPanel
                   currentPhase={status?.current_phase || 0}
                   phaseName={getPhaseName(status?.current_phase || 0)}
@@ -386,12 +412,24 @@ export function ProjectDashboard() {
             <BudgetOverview projectName={name} />
           </TabsContent>
 
+          <TabsContent value="guardrails" className="m-0 h-full p-4">
+            <ProjectGuardrailsPage projectName={name} />
+          </TabsContent>
+
           <TabsContent value="chat" className="m-0 h-full p-4">
-            <ChatPanel projectName={name} />
+            <ErrorBoundary FallbackComponent={InlineErrorFallback}>
+              <ChatPanel projectName={name} />
+            </ErrorBoundary>
           </TabsContent>
 
           <TabsContent value="errors" className="m-0 h-full p-4">
             <ErrorPanel projectName={name} />
+          </TabsContent>
+
+          <TabsContent value="git" className="m-0 h-full p-4">
+            <ErrorBoundary FallbackComponent={InlineErrorFallback}>
+              <GitPanel projectName={name} />
+            </ErrorBoundary>
           </TabsContent>
         </div>
       </Tabs>

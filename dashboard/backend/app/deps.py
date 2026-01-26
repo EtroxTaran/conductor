@@ -3,10 +3,14 @@
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Query
 
 from .config import get_settings
+
+if TYPE_CHECKING:
+    pass
 
 # Add orchestrator to path
 _settings = get_settings()

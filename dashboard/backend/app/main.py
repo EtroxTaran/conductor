@@ -4,20 +4,25 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import verify_api_key
 from .config import get_settings
+from .middleware import RateLimitMiddleware
+from .middleware.rate_limit import RateLimitConfig
 from .routers import (
     agents_router,
     budget_router,
     chat_router,
     collection_router,
+    git_router,
     projects_router,
     tasks_router,
     workflow_router,
 )
 from .services import start_event_bridge, stop_event_bridge
+from .utils import RequestLoggingMiddleware, register_exception_handlers
 from .websocket import get_connection_manager
 
 # Configure logging
@@ -68,23 +73,45 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    # Add CORS middleware
+    # Add CORS middleware (order matters - CORS should be early)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=settings.cors_allow_methods,
+        allow_headers=settings.cors_allow_headers,
+        max_age=settings.cors_max_age,
     )
 
-    # Include routers
-    app.include_router(projects_router, prefix="/api")
-    app.include_router(workflow_router, prefix="/api")
-    app.include_router(tasks_router, prefix="/api")
-    app.include_router(agents_router, prefix="/api")
-    app.include_router(budget_router, prefix="/api")
-    app.include_router(chat_router, prefix="/api")
-    app.include_router(collection_router)  # Already has /api/collection prefix
+    # Add request logging middleware
+    app.add_middleware(RequestLoggingMiddleware)
+
+    # Add rate limiting middleware
+    if settings.rate_limit_enabled:
+        rate_limit_config = RateLimitConfig(
+            requests_per_minute=settings.rate_limit_per_minute,
+            requests_per_second=settings.rate_limit_per_second,
+            enabled=True,
+        )
+        app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
+
+    # Register exception handlers
+    register_exception_handlers(app)
+
+    # API key dependency for protected routes
+    api_key_dependency = [Depends(verify_api_key)]
+
+    # Include routers with authentication
+    app.include_router(projects_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(workflow_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(tasks_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(agents_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(budget_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(chat_router, prefix="/api", dependencies=api_key_dependency)
+    app.include_router(
+        collection_router, dependencies=api_key_dependency
+    )  # Already has /api/collection prefix
+    app.include_router(git_router, prefix="/api", dependencies=api_key_dependency)
 
     # WebSocket endpoint for project events
     @app.websocket("/api/projects/{project_name}/events")

@@ -129,8 +129,13 @@ function AuditEntryRow({
           <span>{formatCost(entry.cost_usd)}</span>
         )}
         {entry.timestamp && <span>{formatDate(entry.timestamp)}</span>}
-        <Button variant="ghost" size="icon" className="h-6 w-6">
-          <Eye className="h-3 w-3" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label="View details"
+        >
+          <Eye className="h-3 w-3" aria-hidden="true" />
         </Button>
       </div>
     </div>

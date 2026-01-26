@@ -2,13 +2,16 @@
 
 # Import orchestrator modules
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
 from ..config import get_settings
+from ..constants import SafetyLimits
 from ..deps import get_audit_adapter, get_project_dir
 from ..models import (
     AgentStatus,
@@ -21,6 +24,7 @@ from ..models import (
     SessionInfo,
     SessionListResponse,
 )
+from ..utils import safe_json_load
 
 settings = get_settings()
 sys.path.insert(0, str(settings.conductor_root))
@@ -44,42 +48,50 @@ async def get_agents_status(
     # Get statistics from audit
     stats = audit_adapter.get_statistics()
 
+    # FIX N+1: Single query, then group in memory
+    all_entries = audit_adapter.query(limit=SafetyLimits.MAX_AUDIT_ENTRIES)
+
+    # Group entries by agent
+    entries_by_agent: dict[str, list] = defaultdict(list)
+    for entry in all_entries:
+        entries_by_agent[entry.agent].append(entry)
+
+    # Check agent availability once
+    from orchestrator.agents import ClaudeAgent, CursorAgent, GeminiAgent
+
+    agent_availability = {
+        "claude": ClaudeAgent(project_dir).check_available(),
+        "cursor": CursorAgent(project_dir).check_available(),
+        "gemini": GeminiAgent(project_dir).check_available(),
+    }
+
     agents = []
     for agent_type in AgentType:
         agent_name = agent_type.value
-        agent_stats = stats.by_agent.get(agent_name, 0)
+        agent_entries = entries_by_agent.get(agent_name, [])
 
-        # Get recent entries for this agent
-        recent_entries = audit_adapter.query(agent=agent_name, limit=1)
+        # Get most recent entry for last invocation
         last_invocation = None
-        if recent_entries:
-            last_invocation = (
-                recent_entries[0].timestamp.isoformat() if recent_entries[0].timestamp else None
+        if agent_entries:
+            # Sort by timestamp, get most recent
+            sorted_entries = sorted(
+                agent_entries,
+                key=lambda e: e.timestamp or datetime.min,
+                reverse=True,
             )
+            if sorted_entries and sorted_entries[0].timestamp:
+                last_invocation = sorted_entries[0].timestamp.isoformat()
 
-        # Calculate agent-specific metrics
-        agent_entries = audit_adapter.query(agent=agent_name, limit=1000)
+        # Calculate agent-specific metrics from grouped data
         total = len(agent_entries)
         success = sum(1 for e in agent_entries if e.status == "success")
         total_duration = sum(e.duration_seconds or 0 for e in agent_entries)
         total_cost = sum(e.cost_usd or 0 for e in agent_entries)
 
-        # Check if agent is available
-        from orchestrator.agents import ClaudeAgent, CursorAgent, GeminiAgent
-
-        if agent_name == "claude":
-            available = ClaudeAgent(project_dir).check_available()
-        elif agent_name == "cursor":
-            available = CursorAgent(project_dir).check_available()
-        elif agent_name == "gemini":
-            available = GeminiAgent(project_dir).check_available()
-        else:
-            available = False
-
         agents.append(
             AgentStatus(
                 agent=agent_type,
-                available=available,
+                available=agent_availability.get(agent_name, False),
                 last_invocation=last_invocation,
                 total_invocations=total,
                 success_rate=success / total if total > 0 else 0.0,
@@ -189,15 +201,24 @@ async def get_sessions(
     project_dir: Path = Depends(get_project_dir),
 ) -> SessionListResponse:
     """Get active sessions."""
-    import json
-
     sessions = []
     sessions_dir = project_dir / ".workflow" / "sessions"
 
     if sessions_dir.exists():
-        for session_file in sessions_dir.glob("*.json"):
-            try:
-                session_data = json.loads(session_file.read_text())
+        # Limit file iteration to prevent resource exhaustion
+        session_files = islice(
+            sessions_dir.glob("*.json"),
+            SafetyLimits.MAX_SESSION_FILES,
+        )
+
+        for session_file in session_files:
+            # Use safe JSON loading
+            with safe_json_load(
+                session_file, context=f"session {session_file.name}", default=None
+            ) as session_data:
+                if session_data is None:
+                    continue
+
                 sessions.append(
                     SessionInfo(
                         session_id=session_data.get("session_id", session_file.stem),
@@ -209,7 +230,5 @@ async def get_sessions(
                         active=session_data.get("active", True),
                     )
                 )
-            except (json.JSONDecodeError, OSError):
-                continue
 
     return SessionListResponse(sessions=sessions)

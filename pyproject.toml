@@ -148,6 +148,7 @@ exclude = [
     "tests/",
     "build/",
     "dist/",
+    "dashboard/",  # Separate FastAPI codebase with own type standards
 ]
 
 [tool.ruff]

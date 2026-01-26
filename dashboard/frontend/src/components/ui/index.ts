@@ -17,3 +17,7 @@ export * from "./guidance";
 export * from "./alert-dialog";
 export * from "./AlertBanner";
 export * from "./select";
+export * from "./textarea";
+export * from "./ErrorFallback";
+export * from "./Breadcrumb";
+export * from "./ShortcutsDialog";

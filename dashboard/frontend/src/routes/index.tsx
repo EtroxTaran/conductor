@@ -3,16 +3,27 @@
  */
 
 import { createRootRoute, createRoute, Outlet } from "@tanstack/react-router";
+import { ErrorBoundary } from "react-error-boundary";
 import { Layout } from "@/components/Layout";
+import { ErrorFallback } from "@/components/ui";
 import { ProjectsPage } from "./ProjectsPage";
 import { ProjectDashboard } from "./ProjectDashboard";
 import { SettingsPage } from "./SettingsPage";
+import { CollectionPage } from "@/components/collection/CollectionPage";
 
-// Root route with layout
+// Root route with layout and error boundary
 const rootRoute = createRootRoute({
   component: () => (
     <Layout>
-      <Outlet />
+      <ErrorBoundary
+        FallbackComponent={ErrorFallback}
+        onReset={() => {
+          // Reset app state on error recovery
+          window.location.reload();
+        }}
+      >
+        <Outlet />
+      </ErrorBoundary>
     </Layout>
   ),
 });
@@ -31,6 +42,13 @@ const projectRoute = createRoute({
   component: ProjectDashboard,
 });
 
+// Collection route
+const collectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/collection",
+  component: CollectionPage,
+});
+
 // Settings route
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -42,5 +60,6 @@ const settingsRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   projectRoute,
+  collectionRoute,
   settingsRoute,
 ]);

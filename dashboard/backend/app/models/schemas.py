@@ -444,3 +444,87 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     status_code: int = 400
+
+
+# Rate limit response
+class RateLimitResponse(BaseModel):
+    """Rate limit exceeded response."""
+
+    error: str = "RATE_LIMIT_EXCEEDED"
+    message: str = "Too many requests. Please slow down."
+    retry_after: int = Field(..., description="Seconds to wait before retrying")
+
+
+# Deletion confirmation models
+class DeletionPreviewResponse(BaseModel):
+    """Response when deletion requires confirmation."""
+
+    requires_confirmation: bool = True
+    confirmation_token: str
+    expires_in_seconds: int = 300
+    files_to_delete: list[str] = Field(default_factory=list)
+    message: str
+
+
+class DeletionConfirmedResponse(BaseModel):
+    """Response after confirmed deletion."""
+
+    message: str
+    files_deleted: list[str] = Field(default_factory=list)
+
+
+# Guardrail toggle response
+class GuardrailToggleResponse(BaseModel):
+    """Response from toggling a guardrail."""
+
+    item_id: str
+    enabled: bool
+    message: str
+
+
+# Guardrail promote response
+class GuardrailPromoteResponse(BaseModel):
+    """Response from promoting a guardrail to global collection."""
+
+    item_id: str
+    promoted: bool
+    source_project: str
+    destination_path: Optional[str] = None
+    message: str
+    errors: Optional[list[str]] = None
+
+
+# Workflow graph models
+class WorkflowNode(BaseModel):
+    """Node in the workflow graph."""
+
+    id: str
+    label: str
+    status: str  # pending, in_progress, completed, failed
+    phase: Optional[int] = None
+
+
+class WorkflowEdge(BaseModel):
+    """Edge in the workflow graph."""
+
+    source: str
+    target: str
+
+
+class WorkflowGraphResponse(BaseModel):
+    """Workflow graph for visualization."""
+
+    nodes: list[WorkflowNode] = Field(default_factory=list)
+    edges: list[WorkflowEdge] = Field(default_factory=list)
+    current_node: Optional[str] = None
+
+
+# Phase feedback response
+class PhaseFeedbackResponse(BaseModel):
+    """Combined feedback from validation or verification phase."""
+
+    phase: int
+    cursor_feedback: Optional[FeedbackResponse] = None
+    gemini_feedback: Optional[FeedbackResponse] = None
+    consolidated_score: Optional[float] = None
+    approved: bool = False

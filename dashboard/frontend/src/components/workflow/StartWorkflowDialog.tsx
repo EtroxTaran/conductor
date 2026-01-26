@@ -54,7 +54,7 @@ export function StartWorkflowDialog({ projectName }: StartWorkflowDialogProps) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm">
-          <Play className="h-4 w-4 mr-2" />
+          <Play className="h-4 w-4 mr-2" aria-hidden="true" />
           Start Workflow
         </Button>
       </DialogTrigger>
@@ -158,8 +158,11 @@ export function StartWorkflowDialog({ projectName }: StartWorkflowDialogProps) {
         </div>
         <DialogFooter>
           {success ? (
-            <div className="flex items-center gap-2 text-green-600 font-medium animate-fade-in-up">
-              <CheckCircle2 className="h-5 w-5" />
+            <div
+              className="flex items-center gap-2 text-green-600 font-medium animate-fade-in-up"
+              role="status"
+            >
+              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
               Started! Launching workflow...
             </div>
           ) : (

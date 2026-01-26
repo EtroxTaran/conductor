@@ -22,6 +22,8 @@ export function useStreamingChat(projectName?: string) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
+  // Use ref to avoid stale closure in WebSocket onmessage handler
+  const currentResponseRef = useRef("");
 
   const sendMessage = useCallback(
     (message: string) => {
@@ -33,6 +35,7 @@ export function useStreamingChat(projectName?: string) {
 
       // Start streaming
       setIsStreaming(true);
+      currentResponseRef.current = "";
       setCurrentResponse("");
 
       const ws = createChatWebSocket(projectName);
@@ -46,17 +49,22 @@ export function useStreamingChat(projectName?: string) {
           const data = JSON.parse(event.data);
 
           if (data.type === "chat_chunk") {
-            setCurrentResponse((prev) => prev + data.data.content);
+            const newContent = currentResponseRef.current + data.data.content;
+            currentResponseRef.current = newContent;
+            setCurrentResponse(newContent);
           } else if (data.type === "chat_complete") {
             setIsStreaming(false);
+            // Use ref to get the current response (avoids stale closure)
+            const finalResponse = currentResponseRef.current;
             setMessages((prev) => [
               ...prev,
               {
                 role: "assistant",
-                content: currentResponse,
+                content: finalResponse,
                 timestamp: new Date().toISOString(),
               },
             ]);
+            currentResponseRef.current = "";
             setCurrentResponse("");
           } else if (data.type === "chat_error") {
             setIsStreaming(false);
@@ -85,7 +93,7 @@ export function useStreamingChat(projectName?: string) {
 
       wsRef.current = ws;
     },
-    [projectName, currentResponse],
+    [projectName],
   );
 
   const stopStreaming = useCallback(() => {
@@ -98,6 +106,7 @@ export function useStreamingChat(projectName?: string) {
 
   const clearMessages = useCallback(() => {
     setMessages([]);
+    currentResponseRef.current = "";
     setCurrentResponse("");
   }, []);
 

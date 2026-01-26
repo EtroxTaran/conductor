@@ -3,6 +3,8 @@
 from .agents import router as agents_router
 from .budget import router as budget_router
 from .chat import router as chat_router
+from .collection import router as collection_router
+from .git import router as git_router
 from .projects import router as projects_router
 from .tasks import router as tasks_router
 from .workflow import router as workflow_router
@@ -14,4 +16,6 @@ __all__ = [
     "agents_router",
     "budget_router",
     "chat_router",
+    "collection_router",
+    "git_router",
 ]

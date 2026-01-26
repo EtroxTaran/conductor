@@ -21,6 +21,13 @@ from ..models import (
     ErrorResponse,
     EscalationResponse,
 )
+from ..security import (
+    SanitizationError,
+    build_safe_claude_command,
+    build_safe_slash_command,
+    sanitize_chat_message,
+    sanitize_command_name,
+)
 from ..websocket import get_connection_manager
 
 settings = get_settings()
@@ -41,6 +48,12 @@ async def send_chat_message(
     project_manager: ProjectManager = Depends(get_project_manager),
 ) -> ChatResponse:
     """Send a chat message to Claude."""
+    # Sanitize input
+    try:
+        sanitized_message = sanitize_chat_message(request.message)
+    except SanitizationError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
     # Determine working directory
     if request.project_name:
         project_dir = project_manager.get_project(request.project_name)
@@ -52,8 +65,11 @@ async def send_chat_message(
     else:
         cwd = str(get_settings().conductor_root)
 
-    # Build Claude command
-    cmd = ["claude", "-p", request.message, "--output-format", "text"]
+    # Build safe Claude command
+    try:
+        cmd = build_safe_claude_command(sanitized_message, output_format="text")
+    except SanitizationError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
     try:
         result = subprocess.run(
@@ -86,6 +102,12 @@ async def execute_command(
     project_manager: ProjectManager = Depends(get_project_manager),
 ) -> CommandResponse:
     """Execute a Claude command."""
+    # Validate and sanitize command
+    try:
+        validated_command = sanitize_command_name(request.command)
+    except SanitizationError as e:
+        return CommandResponse(success=False, error=e.message)
+
     # Determine working directory
     if request.project_name:
         project_dir = project_manager.get_project(request.project_name)
@@ -97,13 +119,15 @@ async def execute_command(
     else:
         cwd = str(get_settings().conductor_root)
 
-    # Format command as prompt
-    command_prompt = f"/{request.command}"
-    if request.args:
-        command_prompt += " " + " ".join(request.args)
-
-    # Build Claude command
-    cmd = ["claude", "-p", command_prompt, "--output-format", "text"]
+    # Build safe slash command
+    try:
+        cmd = build_safe_slash_command(
+            validated_command,
+            args=request.args,
+            output_format="text",
+        )
+    except SanitizationError as e:
+        return CommandResponse(success=False, error=e.message)
 
     try:
         result = subprocess.run(
@@ -149,16 +173,44 @@ async def chat_stream(
 
     try:
         while True:
-            # Receive message
+            # Receive message with JSON error handling
             data = await websocket.receive_text()
-            message_data = json.loads(data)
+            try:
+                message_data = json.loads(data)
+            except json.JSONDecodeError:
+                await manager.send_to_connection(
+                    websocket,
+                    "chat_error",
+                    {"error": "Invalid JSON in message"},
+                )
+                continue
+
             message = message_data.get("message", "")
 
             if not message:
                 continue
 
-            # Build Claude command with streaming output
-            cmd = ["claude", "-p", message, "--output-format", "stream-json"]
+            # Sanitize the message
+            try:
+                sanitized_message = sanitize_chat_message(message)
+            except SanitizationError as e:
+                await manager.send_to_connection(
+                    websocket,
+                    "chat_error",
+                    {"error": e.message},
+                )
+                continue
+
+            # Build safe Claude command with streaming output
+            try:
+                cmd = build_safe_claude_command(sanitized_message, output_format="stream-json")
+            except SanitizationError as e:
+                await manager.send_to_connection(
+                    websocket,
+                    "chat_error",
+                    {"error": e.message},
+                )
+                continue
 
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -179,6 +231,7 @@ async def chat_stream(
                                 {"content": chunk.get("content", "")},
                             )
                         except json.JSONDecodeError:
+                            # Non-JSON output, send as-is
                             await manager.send_to_connection(
                                 websocket,
                                 "chat_chunk",
