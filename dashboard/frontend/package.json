@@ -50,14 +50,10 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.41.1",
     "@testing-library/jest-dom": "^6.2.0",
     "@testing-library/react": "^14.1.2",
     "@testing-library/user-event": "^14.5.2",
-    "@vitest/coverage-v8": "^1.2.0",
-    "jsdom": "^23.2.0",
-    "msw": "^2.1.0",
-    "vitest": "^1.2.0",
-    "@playwright/test": "^1.41.1",
     "@types/babel__generator": "^7.27.0",
     "@types/babel__template": "^7.4.4",
     "@types/babel__traverse": "^7.28.0",
@@ -71,14 +67,18 @@
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
     "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.4.17",
     "eslint": "^8.56.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "jsdom": "^23.2.0",
+    "msw": "^2.1.0",
     "postcss": "^8.4.33",
     "prettier": "^3.2.4",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
   }
 }
