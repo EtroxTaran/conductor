@@ -217,9 +217,108 @@ def cleanup_global_state():
     This ensures test isolation by cleaning up any global singletons
     or cached state that may persist between tests.
     """
+    # Clear all repository caches BEFORE test runs (clean slate)
+    _clear_repository_caches()
+
     yield
-    # Add cleanup for any known global singletons here
-    # Example: ModuleName._instance = None
+
+    # Clear again after test completes (cleanup)
+    _clear_repository_caches()
+
+
+def _clear_repository_caches():
+    """Clear all repository module-level caches.
+
+    This prevents test isolation issues where one test's cached repository
+    affects another test's behavior.
+    """
+    # Fix for tests/cli/test_debug_cli.py which patches orchestrator.orchestrator at module level
+    # We need to restore the original module if it was mocked
+    import importlib
+
+    orchestrator_module_key = "orchestrator.orchestrator"
+    if orchestrator_module_key in sys.modules:
+        module = sys.modules[orchestrator_module_key]
+        # Check if it's a mock (has _mock_name attribute)
+        if hasattr(module, "_mock_name") or isinstance(module, MagicMock):
+            # Remove the mock and reimport the real module
+            del sys.modules[orchestrator_module_key]
+            try:
+                importlib.import_module(orchestrator_module_key)
+            except ImportError:
+                pass  # Module may not be importable in all contexts
+    # Import and clear each repository's cache
+    try:
+        from orchestrator.db.repositories import phase_outputs
+
+        phase_outputs._repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import logs
+
+        logs._repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import evaluation
+
+        evaluation._repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import audit
+
+        audit._audit_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import budget
+
+        budget._budget_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import checkpoints
+
+        checkpoints._checkpoint_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import prompts
+
+        prompts._prompt_repos.clear()
+        prompts._golden_repos.clear()
+        prompts._opt_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import sessions
+
+        sessions._session_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import tasks
+
+        tasks._task_repos.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from orchestrator.db.repositories import workflow
+
+        workflow._workflow_repos.clear()
+    except (ImportError, AttributeError):
+        pass
 
 
 # -------------------------------------------------------------------

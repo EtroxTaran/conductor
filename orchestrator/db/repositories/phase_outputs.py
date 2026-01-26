@@ -65,8 +65,28 @@ class PhaseOutputRepository(BaseRepository[PhaseOutput]):
 
     table_name = "phase_outputs"
 
-    def _to_record(self, data: dict[str, Any]) -> PhaseOutput:
-        """Convert database record to PhaseOutput."""
+    def _to_record(self, data: dict[str, Any] | str | None) -> PhaseOutput:
+        """Convert database record to PhaseOutput.
+
+        Handles edge cases:
+        - None: Returns PhaseOutput with defaults
+        - str: Treats string as record ID
+        - dict: Normal conversion
+        """
+        if data is None:
+            return PhaseOutput(
+                id="",
+                phase=0,
+                output_type="",
+                content={},
+            )
+        if isinstance(data, str):
+            return PhaseOutput(
+                id=data,
+                phase=0,
+                output_type="",
+                content={},
+            )
         return PhaseOutput(
             id=str(data.get("id", "")),
             phase=data.get("phase", 0),

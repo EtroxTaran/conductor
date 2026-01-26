@@ -81,7 +81,7 @@ class TestContextManager:
 
         assert isinstance(context, ContextState)
         assert "agents" in context.files
-        assert "product" in context.files
+        assert "product.md" in context.files  # Key includes extension
         assert context.version == "1.0"
         assert context.captured_at is not None
 

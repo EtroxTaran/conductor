@@ -1,20 +1,29 @@
 """Tests for Time Travel Debugger CLI."""
 
 import sys
-from unittest.mock import MagicMock
-
-# Mock orchestrator module to avoid circular imports and missing dependencies
-mock_orchestrator = MagicMock()
-sys.modules["orchestrator.orchestrator"] = mock_orchestrator
-
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from orchestrator.cli.debug import TimeTravelDebugger
 from orchestrator.storage.base import CheckpointData
+
+
+@pytest.fixture(autouse=True)
+def mock_orchestrator_module():
+    """Temporarily mock orchestrator.orchestrator for this test module only."""
+    # Save original if it exists
+    original = sys.modules.get("orchestrator.orchestrator")
+    mock_orch = MagicMock()
+    sys.modules["orchestrator.orchestrator"] = mock_orch
+    yield mock_orch
+    # Restore original
+    if original is not None:
+        sys.modules["orchestrator.orchestrator"] = original
+    elif "orchestrator.orchestrator" in sys.modules:
+        del sys.modules["orchestrator.orchestrator"]
 
 
 @pytest.fixture

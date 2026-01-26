@@ -163,7 +163,8 @@ class TestValidationRouter:
         from orchestrator.langgraph.routers.validation import validation_router
 
         state = {"next_decision": "continue"}
-        result = validation_router(state)
+        config = {"configurable": {}}  # Mock RunnableConfig
+        result = validation_router(state, config)
         assert result == "implementation"
 
     def test_route_to_planning_on_retry(self):
@@ -171,7 +172,8 @@ class TestValidationRouter:
         from orchestrator.langgraph.routers.validation import validation_router
 
         state = {"next_decision": "retry"}
-        result = validation_router(state)
+        config = {"configurable": {}}  # Mock RunnableConfig
+        result = validation_router(state, config)
         assert result == "planning"
 
     def test_route_to_escalation_on_escalate(self):
@@ -179,7 +181,8 @@ class TestValidationRouter:
         from orchestrator.langgraph.routers.validation import validation_router
 
         state = {"next_decision": "escalate"}
-        result = validation_router(state)
+        config = {"configurable": {}}  # Mock RunnableConfig
+        result = validation_router(state, config)
         assert result == "human_escalation"
 
     def test_route_to_end_on_abort(self):
@@ -187,7 +190,8 @@ class TestValidationRouter:
         from orchestrator.langgraph.routers.validation import validation_router
 
         state = {"next_decision": "abort"}
-        result = validation_router(state)
+        config = {"configurable": {}}  # Mock RunnableConfig
+        result = validation_router(state, config)
         assert result == "__end__"
 
     def test_route_default_to_escalation(self):
@@ -195,7 +199,8 @@ class TestValidationRouter:
         from orchestrator.langgraph.routers.validation import validation_router
 
         state = {"next_decision": "unknown"}
-        result = validation_router(state)
+        config = {"configurable": {}}  # Mock RunnableConfig
+        result = validation_router(state, config)
         # Unknown decisions route to human escalation for safety
         assert result == "human_escalation"
 
@@ -741,7 +746,7 @@ class TestAsyncCircuitBreaker:
             try:
                 async with cb:
                     pass
-                assert False, "Should have raised AsyncCircuitBreakerError"
+                pytest.fail("Should have raised AsyncCircuitBreakerError")
             except AsyncCircuitBreakerError:
                 pass  # Expected
 

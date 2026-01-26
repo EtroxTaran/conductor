@@ -56,10 +56,10 @@ class TestAgentRegistry:
         for agent_id, agent in AGENT_REGISTRY.items():
             assert agent.id == agent_id
             assert agent.name
-            assert agent.primary_cli in ["claude", "cursor", "gemini"]
+            assert agent.primary_cli in ["claude", "cursor", "gemini", "python"]
             assert isinstance(agent.reviewers, list)
             assert isinstance(agent.max_iterations, int)
-            assert agent.max_iterations > 0
+            assert agent.max_iterations >= 0  # Some agents (e.g., Watchdog) have 0
 
     def test_reviewer_agents_have_specialization(self):
         """Test that reviewer agents have review specialization."""
@@ -80,7 +80,7 @@ class TestAgentRegistry:
     def test_get_all_agents(self):
         """Test getting all agents."""
         all_agents = get_all_agents()
-        assert len(all_agents) == 12
+        assert len(all_agents) == 15  # Updated: 15 agents in registry
 
     def test_get_agents_by_cli(self):
         """Test filtering agents by CLI."""
@@ -164,7 +164,7 @@ class TestReviewPairings:
         """Test that reviewers use different CLIs when possible."""
         pairings = get_review_pairings()
 
-        for agent_id, pairing in pairings.items():
+        for _agent_id, pairing in pairings.items():
             clis = pairing["reviewer_clis"]
             # At least one should be different if 2+ reviewers
             if len(clis) >= 2:

@@ -237,7 +237,7 @@ class TestErrorContext:
         async def error_node(state):
             raise RuntimeError("Test error")
 
-        result = asyncio.get_event_loop().run_until_complete(error_node(initial_state))
+        result = asyncio.run(error_node(initial_state))
 
         error_ctx = result["error_context"]
 
@@ -261,7 +261,7 @@ class TestErrorContext:
         async def error_node(state):
             raise ValueError("Test")
 
-        result = asyncio.get_event_loop().run_until_complete(error_node(initial_state))
+        result = asyncio.run(error_node(initial_state))
 
         # State snapshot should only have safe fields
         snapshot = result["error_context"]["state_snapshot"]

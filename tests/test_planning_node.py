@@ -37,12 +37,15 @@ class TestPlanningNode:
 
     @pytest.fixture
     def temp_project_dir(self, tmp_path):
-        """Create a temporary project with PRODUCT.md."""
+        """Create a temporary project with docs/ folder."""
         project_dir = tmp_path / "test-project"
         project_dir.mkdir()
 
-        # Create PRODUCT.md with all required sections
-        product_md = project_dir / "PRODUCT.md"
+        # Create docs/ folder with PRODUCT.md (this is the required structure)
+        docs_dir = project_dir / "docs"
+        docs_dir.mkdir()
+
+        product_md = docs_dir / "PRODUCT.md"
         product_md.write_text(
             """# Test Feature
 
@@ -156,22 +159,23 @@ We need comprehensive test coverage to ensure reliable operation.
         # Plan is now saved to DB, not file - verified by mock
 
     @pytest.mark.asyncio
-    async def test_planning_node_missing_product_md(self, temp_project_dir):
-        """Test that missing PRODUCT.md returns abort."""
-        # Remove PRODUCT.md
-        product_file = temp_project_dir / "PRODUCT.md"
-        product_file.unlink()
+    async def test_planning_node_missing_docs(self, tmp_path):
+        """Test that missing docs/ folder returns abort."""
+        # Create project without docs/ folder
+        project_dir = tmp_path / "empty-project"
+        project_dir.mkdir()
+        (project_dir / ".workflow" / "phases" / "planning").mkdir(parents=True)
 
         state = create_initial_state(
-            project_dir=str(temp_project_dir),
-            project_name="test-project",
+            project_dir=str(project_dir),
+            project_name="empty-project",
         )
 
         result = await planning_node(state)
 
         assert result["next_decision"] == "abort"
         assert len(result.get("errors", [])) > 0
-        assert result["errors"][0]["type"] == "missing_file"
+        assert result["errors"][0]["type"] == "no_documentation"
 
     @pytest.mark.asyncio
     async def test_planning_node_claude_failure_retry(self, initial_state):

@@ -579,7 +579,7 @@ async def validation_fan_in_node(state: WorkflowState) -> dict[str, Any]:
 
     action_logger.log_info("Merging validation results", phase=2)
 
-    feedback = state.get("validation_feedback", {})
+    feedback = state.get("validation_feedback") or {}
 
     cursor_feedback = feedback.get("cursor")
     gemini_feedback = feedback.get("gemini")

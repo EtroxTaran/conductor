@@ -368,9 +368,10 @@ class TestGetAgentForTask:
     """Tests for get_agent_for_task function."""
 
     def test_default_agent(self):
-        """Test default agent selection."""
+        """Test default agent selection (uses dynamic role dispatch)."""
         agent_type, model = get_agent_for_task({})
-        assert agent_type == AgentType.CLAUDE
+        # Default is CURSOR via ROLE_DISPATCH_RULES[TaskType.GENERAL]
+        assert agent_type == AgentType.CURSOR
 
     def test_task_specified_agent(self):
         """Test task-specified agent."""
@@ -378,8 +379,10 @@ class TestGetAgentForTask:
         assert agent_type == AgentType.CURSOR
 
     def test_task_specified_model(self):
-        """Test task-specified model."""
-        agent_type, model = get_agent_for_task({"model": CLAUDE_OPUS})
+        """Test task-specified model with matching agent."""
+        # Must specify agent type when specifying model to avoid mismatch
+        agent_type, model = get_agent_for_task({"agent_type": "claude", "model": CLAUDE_OPUS})
+        assert agent_type == AgentType.CLAUDE
         assert model == CLAUDE_OPUS
 
     def test_env_override(self, monkeypatch):

@@ -64,15 +64,15 @@ The system uses a microservices architecture.
             assert "docs" in result.source_folders[0]
             assert result.score >= 4.0
 
-    def test_discover_documents_folder(self):
-        """Test discovering documentation from Documents/ folder."""
+    def test_discover_docs_case_insensitive(self):
+        """Test discovering documentation from Docs/ folder (case variant)."""
         from orchestrator.validators.documentation_discovery import DocumentationScanner
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
 
-            # Create Documents structure
-            docs_dir = project_dir / "Documents"
+            # Create Docs structure (capital D)
+            docs_dir = project_dir / "Docs"
             docs_dir.mkdir(parents=True)
 
             # Create product file
@@ -92,18 +92,18 @@ Our product helps developers work faster.
             scanner = DocumentationScanner()
             result = scanner.discover(project_dir)
 
-            # Result may not be valid due to low score, but should have documents
+            # Should discover Docs folder
             assert len(result.documents) >= 1
-            assert "Documents" in result.source_folders[0]
+            assert "Docs" in result.source_folders[0]
 
-    def test_fallback_to_product_md(self):
-        """Test fallback to PRODUCT.md when no docs folder exists."""
+    def test_no_fallback_to_product_md(self):
+        """Test that PRODUCT.md in root is NOT used (no fallback)."""
         from orchestrator.validators.documentation_discovery import DocumentationScanner
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
 
-            # Only create PRODUCT.md
+            # Only create PRODUCT.md (not in docs/ folder)
             product_md = project_dir / "PRODUCT.md"
             product_md.write_text(
                 """# My Product
@@ -121,9 +121,10 @@ A tool for testing.
             scanner = DocumentationScanner()
             result = scanner.discover(project_dir)
 
-            # May not meet is_valid threshold, but should have content
-            assert "PRODUCT.md" in result.source_folders[0]
-            assert len(result.documents) == 1
+            # Should NOT find PRODUCT.md - no fallback to root
+            assert not result.is_valid
+            assert result.score == 0.0
+            assert len(result.documents) == 0
 
     def test_no_documentation_found(self):
         """Test behavior when no documentation is found."""

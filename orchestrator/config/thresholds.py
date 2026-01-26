@@ -455,6 +455,8 @@ def _merge_config(base: ProjectConfig, custom: dict) -> ProjectConfig:
         w = custom["workflow"]
         if "features" in w:
             f = w["features"]
+            if "documentation_discovery" in f:
+                base.workflow.features.documentation_discovery = bool(f["documentation_discovery"])
             if "product_validation" in f:
                 base.workflow.features.product_validation = bool(f["product_validation"])
             if "environment_check" in f:
