@@ -59,8 +59,15 @@ def select_task_router(
         Next node name:
         - "implement_task": Task selected, proceed to implementation
         - "build_verification": All tasks done, proceed to build verification
-        - "human_escalation": No tasks available (deadlock)
+        - "human_escalation": No tasks available (deadlock) or iteration limit exceeded
     """
+    # Check iteration limit to prevent infinite loops
+    iterations = state.get("task_loop_iterations", 0)
+    max_iterations = state.get("max_task_loop_iterations", 50)
+    if iterations >= max_iterations:
+        # Iteration limit exceeded - escalate to human
+        return "human_escalation"
+
     decision = state.get("next_decision")
 
     if decision == WorkflowDecision.CONTINUE or decision == "continue":

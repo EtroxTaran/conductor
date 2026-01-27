@@ -2,6 +2,10 @@
 
 Routers determine the next node based on state conditions.
 Used for conditional edges in the workflow graph.
+
+Router Factory:
+    Use create_decision_router() to create new routers with less boilerplate.
+    See factory.py for details and examples.
 """
 
 from .error_dispatch import error_dispatch_router
@@ -11,6 +15,14 @@ from .evaluation import (
     optimize_prompts_router,
     should_evaluate_router,
 )
+from .factory import (
+    RouterConfig,
+    create_check_router,
+    create_decision_router,
+    create_phase_router,
+    simple_continue_router,
+)
+from .factory import verification_router as verification_router_factory
 from .fix_bug import fix_bug_router
 from .fixer import (
     fixer_apply_router,
@@ -52,6 +64,14 @@ from .verification import verification_router
 from .write_tests import write_tests_router
 
 __all__ = [
+    # Router factory (use for new routers)
+    "create_decision_router",
+    "create_phase_router",
+    "create_check_router",
+    "simple_continue_router",
+    "verification_router_factory",
+    "RouterConfig",
+    # Existing routers
     "validation_router",
     "verification_router",
     "prerequisites_router",

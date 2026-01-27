@@ -1004,6 +1004,10 @@ class WorkflowState(TypedDict, total=False):
     completed_task_ids: Annotated[list[str], _append_unique]
     failed_task_ids: Annotated[list[str], _append_unique]
 
+    # Task loop iteration tracking (guards against infinite loops)
+    task_loop_iterations: int
+    max_task_loop_iterations: int  # Configurable limit from .project-config.json
+
     # Task progress tracking (per-criterion granularity)
     task_progress: dict[str, TaskProgress]  # task_id -> TaskProgress
 
@@ -1113,6 +1117,9 @@ def create_initial_state(
         failed_task_ids=[],
         # Task progress tracking (per-criterion granularity)
         task_progress={},
+        # Task loop iteration tracking (guards against infinite loops)
+        task_loop_iterations=0,
+        max_task_loop_iterations=50,  # Default, can be overridden by config
         # Discussion phase fields (GSD pattern)
         discussion_complete=False,
         context_file=None,

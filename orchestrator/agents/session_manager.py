@@ -8,11 +8,17 @@ Manages session IDs across task iterations, enabling:
 When using --resume, Claude continues from previous conversation
 state instead of starting fresh, preserving file reads and insights.
 
+NOTE: This module is a thin wrapper around the storage adapter layer.
+All session data is stored in SurrealDB. There is no file-based fallback.
+
+For direct access to storage, use:
+    from orchestrator.storage import get_session_storage
+    session_storage = get_session_storage(project_dir)
+
 Reference: https://docs.anthropic.com/claude-code/cli#session-management
 """
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -20,12 +26,12 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from orchestrator.storage.session_adapter import SessionStorageAdapter
 
 logger = logging.getLogger(__name__)
-
-# Session storage location
-DEFAULT_SESSIONS_DIR = ".workflow/sessions"
 
 # Session expiry for automatic cleanup
 SESSION_TTL_HOURS = 24
@@ -91,6 +97,11 @@ class SessionManager:
     - Sessions persist across iterations within a task
     - New tasks get new sessions (avoids cross-contamination)
 
+    NOTE: This class is a thin wrapper around SessionStorageAdapter.
+    All session data is stored in SurrealDB. For new code, consider
+    using the storage adapter directly:
+        from orchestrator.storage import get_session_storage
+
     Usage:
         manager = SessionManager(project_dir)
 
@@ -110,54 +121,48 @@ class SessionManager:
     def __init__(
         self,
         project_dir: Path | str,
-        sessions_dir: Optional[str] = None,
+        sessions_dir: Optional[str] = None,  # Deprecated, ignored
         session_ttl_hours: int = SESSION_TTL_HOURS,
     ):
         """Initialize session manager.
 
         Args:
             project_dir: Project directory
-            sessions_dir: Directory for session storage (relative to project)
+            sessions_dir: DEPRECATED - ignored, kept for backwards compatibility
             session_ttl_hours: Hours before sessions expire
         """
         self.project_dir = Path(project_dir)
-        self.sessions_dir = self.project_dir / (sessions_dir or DEFAULT_SESSIONS_DIR)
         self.session_ttl_hours = session_ttl_hours
 
-        # Thread safety lock for _sessions dict access
+        # Thread safety lock
         self._lock = threading.Lock()
 
-        # In-memory cache of active sessions
+        # In-memory cache of active sessions (for backwards compat)
         self._sessions: dict[str, SessionInfo] = {}
 
-        # Load existing sessions
-        self._load_sessions()
+        # Lazily initialized storage adapter
+        self._storage: Optional["SessionStorageAdapter"] = None
+
+    def _get_storage(self) -> "SessionStorageAdapter":
+        """Get or create the storage adapter."""
+        if self._storage is None:
+            from orchestrator.storage import get_session_storage
+
+            self._storage = get_session_storage(
+                self.project_dir,
+                project_name=self.project_dir.name,
+            )
+        return self._storage
 
     def _load_sessions(self) -> None:
-        """Load sessions from disk."""
-        if not self.sessions_dir.exists():
-            return
-
-        for session_file in self.sessions_dir.glob("*.json"):
-            try:
-                data = json.loads(session_file.read_text())
-                session = SessionInfo.from_dict(data)
-
-                # Skip expired sessions
-                if self._is_expired(session):
-                    session_file.unlink(missing_ok=True)
-                    continue
-
-                with self._lock:
-                    self._sessions[session.task_id] = session
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                logger.warning(f"Failed to load session {session_file}: {e}")
+        """Load sessions from DB."""
+        # Sessions are now loaded on-demand from DB via the storage adapter
+        pass
 
     def _save_session(self, session: SessionInfo) -> None:
-        """Save session to disk."""
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        session_file = self.sessions_dir / f"{session.task_id}.json"
-        session_file.write_text(json.dumps(session.to_dict(), indent=2))
+        """Save session to DB (no-op - handled by storage adapter)."""
+        # Storage adapter handles persistence to SurrealDB
+        pass
 
     def _is_expired(self, session: SessionInfo) -> bool:
         """Check if session has expired."""
@@ -173,22 +178,22 @@ class SessionManager:
         Returns:
             SessionInfo if session exists and is active, None otherwise
         """
-        with self._lock:
-            session = self._sessions.get(task_id)
-            if session is None:
-                return None
+        storage = self._get_storage()
+        session_data = storage.get_active_session(task_id)
+        if session_data is None:
+            return None
 
-            if not session.is_active:
-                return None
-
-            if self._is_expired(session):
-                # Mark as inactive (close_session logic inlined to avoid deadlock)
-                session.is_active = False
-                self._save_session(session)
-                logger.info(f"Closed expired session for task {task_id}")
-                return None
-
-            return session
+        # Convert storage data to SessionInfo for backwards compat
+        return SessionInfo(
+            session_id=session_data.id,
+            task_id=session_data.task_id,
+            project_dir=str(self.project_dir),
+            created_at=session_data.created_at or datetime.now(),
+            last_used_at=session_data.updated_at or datetime.now(),
+            iteration=session_data.invocation_count,
+            is_active=(session_data.status == "active"),
+            metadata={},
+        )
 
     def create_session(
         self,
@@ -208,26 +213,33 @@ class SessionManager:
         Returns:
             New SessionInfo
         """
-        with self._lock:
-            # Close any existing session (inlined to avoid deadlock)
-            existing = self._sessions.get(task_id)
-            if existing is not None:
-                existing.is_active = False
-                self._save_session(existing)
+        storage = self._get_storage()
 
-            # Generate session ID if not provided
-            if session_id is None:
-                session_id = self._generate_session_id(task_id)
+        # Close any existing session
+        storage.close_session(task_id)
 
-            session = SessionInfo(
-                session_id=session_id,
-                task_id=task_id,
-                project_dir=str(self.project_dir),
-                metadata=metadata or {},
-            )
+        # Generate session ID if not provided
+        if session_id is None:
+            session_id = self._generate_session_id(task_id)
 
-            self._sessions[task_id] = session
-            self._save_session(session)
+        # Create via storage adapter
+        session_data = storage.create_session(
+            task_id=task_id,
+            agent="claude",
+            session_id=session_id,
+        )
+
+        # Convert to SessionInfo for backwards compat
+        session = SessionInfo(
+            session_id=session_data.id,
+            task_id=session_data.task_id,
+            project_dir=str(self.project_dir),
+            created_at=session_data.created_at or datetime.now(),
+            last_used_at=session_data.updated_at or datetime.now(),
+            iteration=1,
+            is_active=True,
+            metadata=metadata or {},
+        )
 
         logger.info(f"Created session {session_id} for task {task_id}")
         return session
@@ -262,15 +274,9 @@ class SessionManager:
         Returns:
             True if session was updated, False if not found
         """
-        with self._lock:
-            session = self._sessions.get(task_id)
-            if session is None:
-                return False
-
-            session.last_used_at = datetime.now()
-            session.iteration += 1
-            self._save_session(session)
-            return True
+        storage = self._get_storage()
+        storage.touch_session(task_id)
+        return True
 
     def close_session(self, task_id: str) -> bool:
         """Close a session (mark inactive).
@@ -283,16 +289,11 @@ class SessionManager:
         Returns:
             True if session was closed, False if not found
         """
-        with self._lock:
-            session = self._sessions.get(task_id)
-            if session is None:
-                return False
-
-            session.is_active = False
-            self._save_session(session)
-
-        logger.info(f"Closed session for task {task_id}")
-        return True
+        storage = self._get_storage()
+        result = storage.close_session(task_id)
+        if result:
+            logger.info(f"Closed session for task {task_id}")
+        return result
 
     def delete_session(self, task_id: str) -> bool:
         """Delete a session completely.
@@ -303,16 +304,11 @@ class SessionManager:
         Returns:
             True if deleted, False if not found
         """
-        with self._lock:
-            session = self._sessions.pop(task_id, None)
-            if session is None:
-                return False
-
-        session_file = self.sessions_dir / f"{task_id}.json"
-        session_file.unlink(missing_ok=True)
-
-        logger.info(f"Deleted session for task {task_id}")
-        return True
+        storage = self._get_storage()
+        result = storage.delete_session(task_id)
+        if result:
+            logger.info(f"Deleted session for task {task_id}")
+        return result
 
     def get_resume_args(self, task_id: str) -> list[str]:
         """Get CLI arguments to resume a session.
@@ -328,11 +324,8 @@ class SessionManager:
         Returns:
             CLI arguments list
         """
-        session = self.get_session(task_id)
-        if session is None:
-            return []
-
-        return ["--resume", session.session_id]
+        storage = self._get_storage()
+        return storage.get_resume_args(task_id)
 
     def get_session_id_args(self, task_id: str) -> list[str]:
         """Get CLI arguments to set session ID.

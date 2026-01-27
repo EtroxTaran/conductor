@@ -16,6 +16,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy
 
+from ..config.thresholds import ProjectConfig, RetryConfig
 from .nodes import (  # New risk mitigation nodes; Quality infrastructure nodes; Discussion and Research nodes (GSD pattern); Handoff node (GSD pattern); Error dispatch node; Pause check node
     approval_gate_node,
     build_verification_node,
@@ -119,6 +120,7 @@ def pause_check_router(state: WorkflowState) -> str:
 def create_workflow_graph(
     checkpointer: Optional[Any] = None,
     enable_retry_policy: bool = False,
+    retry_config: Optional[RetryConfig] = None,
 ) -> StateGraph:
     """Create the LangGraph workflow graph.
 
@@ -132,12 +134,13 @@ def create_workflow_graph(
 
     Retry Policy (when enabled):
     - Agent nodes (cursor_*, gemini_*) have RetryPolicy for transient failures
-    - Uses exponential backoff: initial_interval=1s, backoff_multiplier=2
-    - Max retries: 3 attempts before failing
+    - Uses exponential backoff with configurable values from RetryConfig
+    - Max retries configurable via retry_config.agent_max_attempts
 
     Args:
         checkpointer: Optional checkpointer for persistence
         enable_retry_policy: Enable retry policies for agent nodes
+        retry_config: Optional RetryConfig with custom retry settings
 
     Returns:
         Compiled StateGraph workflow
@@ -145,18 +148,21 @@ def create_workflow_graph(
     # Create the graph builder
     graph = StateGraph(WorkflowState)
 
+    # Use provided retry config or defaults
+    cfg = retry_config or RetryConfig()
+
     # Check if retry policy should be enabled
-    retry_enabled = (
+    retry_enabled = cfg.enabled and (
         enable_retry_policy or os.environ.get("LANGGRAPH_RETRY_ENABLED", "").lower() == "true"
     )
 
-    # Create retry policies for different node types
+    # Create retry policies for different node types using config values
     agent_retry_policy = (
         RetryPolicy(
-            max_attempts=3,
-            initial_interval=1.0,
-            backoff_factor=2.0,
-            jitter=True,
+            max_attempts=cfg.agent_max_attempts,
+            initial_interval=cfg.agent_initial_interval,
+            backoff_factor=cfg.agent_backoff_factor,
+            jitter=cfg.agent_jitter,
         )
         if retry_enabled
         else None
@@ -164,10 +170,10 @@ def create_workflow_graph(
 
     implementation_retry_policy = (
         RetryPolicy(
-            max_attempts=2,
-            initial_interval=5.0,
-            backoff_factor=2.0,
-            jitter=True,
+            max_attempts=cfg.implementation_max_attempts,
+            initial_interval=cfg.implementation_initial_interval,
+            backoff_factor=cfg.implementation_backoff_factor,
+            jitter=cfg.implementation_jitter,
         )
         if retry_enabled
         else None
@@ -510,6 +516,7 @@ class WorkflowRunner:
         # Graph will be created in __aenter__
         self.graph = None
         self.checkpointer = None
+        self.project_config: Optional[ProjectConfig] = None
 
         # Thread/run configuration
         self.thread_id = f"workflow-{self.project_name}"
@@ -528,8 +535,35 @@ class WorkflowRunner:
             self.checkpointer = SurrealDBSaver(self.project_name)
             logger.info(f"Using SurrealDBSaver for project: {self.project_name}")
 
-        self.graph = create_workflow_graph(checkpointer=self.checkpointer)
+        # Load project config for retry settings and task loop limits
+        self.project_config = self._load_project_config()
+        retry_config = self.project_config.retry if self.project_config else None
+
+        self.graph = create_workflow_graph(
+            checkpointer=self.checkpointer,
+            retry_config=retry_config,
+        )
         return self
+
+    def _load_project_config(self) -> Optional[ProjectConfig]:
+        """Load project configuration from .project-config.json.
+
+        Returns:
+            ProjectConfig if file exists, None otherwise
+        """
+        config_path = self.project_dir / ".project-config.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            import json
+
+            with open(config_path) as f:
+                data = json.load(f)
+            return ProjectConfig.from_dict(data)
+        except Exception as e:
+            logger.warning(f"Failed to load project config: {e}")
+            return None
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit async context."""
@@ -572,6 +606,11 @@ class WorkflowRunner:
                 project_name=self.project_name,
                 execution_mode=execution_mode,
             )
+            # Apply config overrides for task loop limits
+            if self.project_config and self.project_config.retry:
+                initial_state[
+                    "max_task_loop_iterations"
+                ] = self.project_config.retry.max_task_loop_iterations
         elif config and "execution_mode" in config:
             # Update existing state with new execution_mode
             initial_state["execution_mode"] = execution_mode
@@ -662,7 +701,6 @@ class WorkflowRunner:
             Final workflow state
         """
         result = None
-        current_node = None
 
         # Use astream_events for detailed event tracking
         async for event in graph.astream_events(
@@ -676,7 +714,6 @@ class WorkflowRunner:
             if event_type == "on_chain_start":
                 # Node starting
                 if event_name and event_name != "LangGraph":
-                    current_node = event_name
                     state = event.get("data", {}).get("input", {})
                     if isinstance(state, dict):
                         try:
@@ -694,7 +731,6 @@ class WorkflowRunner:
                             callback.on_node_end(event_name, output)
                         except Exception as e:
                             logger.warning(f"Callback error on_node_end: {e}")
-                    current_node = None
 
         return result or initial_state
 

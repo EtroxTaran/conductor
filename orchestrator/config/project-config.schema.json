@@ -1,0 +1,407 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conductor.dev/schemas/project-config.json",
+  "title": "Project Configuration",
+  "description": "Configuration schema for .project-config.json files",
+  "type": "object",
+  "properties": {
+    "project_type": {
+      "type": "string",
+      "description": "Project type for default configuration",
+      "enum": ["base", "backend", "frontend", "fullstack"],
+      "default": "base"
+    },
+    "validation": {
+      "type": "object",
+      "description": "Validation threshold configuration",
+      "properties": {
+        "validation_threshold": {
+          "type": "number",
+          "description": "Phase 2 minimum score (0-10)",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 6.0
+        },
+        "verification_threshold": {
+          "type": "number",
+          "description": "Phase 4 minimum score (0-10)",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 7.0
+        },
+        "max_phase_retries": {
+          "type": "integer",
+          "description": "Maximum retries per phase",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "description": "Code quality configuration",
+      "properties": {
+        "coverage_threshold": {
+          "type": "number",
+          "description": "Minimum test coverage percentage",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 70.0
+        },
+        "coverage_blocking": {
+          "type": "boolean",
+          "description": "Whether coverage failures block workflow",
+          "default": false
+        },
+        "build_required": {
+          "type": "boolean",
+          "description": "Whether build must pass",
+          "default": true
+        },
+        "lint_required": {
+          "type": "boolean",
+          "description": "Whether lint must pass",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "security": {
+      "type": "object",
+      "description": "Security scanning configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable security scanning",
+          "default": true
+        },
+        "blocking_severities": {
+          "type": "array",
+          "description": "Severities that block workflow",
+          "items": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "default": ["critical", "high"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "description": "Workflow behavior configuration",
+      "properties": {
+        "features": {
+          "type": "object",
+          "description": "Feature flags for workflow nodes",
+          "properties": {
+            "documentation_discovery": {
+              "type": "boolean",
+              "default": true
+            },
+            "product_validation": {
+              "type": "boolean",
+              "default": true
+            },
+            "environment_check": {
+              "type": "boolean",
+              "default": true
+            },
+            "build_verification": {
+              "type": "boolean",
+              "default": true
+            },
+            "coverage_check": {
+              "type": "boolean",
+              "default": true
+            },
+            "security_scan": {
+              "type": "boolean",
+              "default": true
+            },
+            "approval_gates": {
+              "type": "boolean",
+              "default": false
+            },
+            "quality_gate": {
+              "type": "boolean",
+              "default": true
+            },
+            "dependency_check": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "approval_phases": {
+          "type": "array",
+          "description": "Phases requiring human approval",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "default": []
+        },
+        "parallel_workers": {
+          "type": "integer",
+          "description": "Number of parallel workers for task execution",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 1
+        },
+        "review_gating": {
+          "type": "string",
+          "description": "Review gating strategy",
+          "enum": ["conservative", "moderate", "aggressive"],
+          "default": "conservative"
+        }
+      },
+      "additionalProperties": false
+    },
+    "research": {
+      "type": "object",
+      "description": "Research phase configuration",
+      "properties": {
+        "web_research_enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "web_research_timeout": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300,
+          "default": 60
+        },
+        "perplexity_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "ref_enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "fallback_on_web_failure": {
+          "type": "boolean",
+          "default": true
+        },
+        "ref_fallback_on_failure": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "quality_gate": {
+      "type": "object",
+      "description": "Quality gate configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "typescript_strict": {
+          "type": "boolean",
+          "default": true
+        },
+        "eslint_required": {
+          "type": "boolean",
+          "default": true
+        },
+        "naming_conventions": {
+          "type": "boolean",
+          "default": true
+        },
+        "code_structure": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_file_lines": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 2000,
+          "default": 500
+        },
+        "max_function_lines": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 200,
+          "default": 50
+        },
+        "minimum_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 6.0
+        },
+        "blocking_severities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+          },
+          "default": ["CRITICAL", "HIGH"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "dependency": {
+      "type": "object",
+      "description": "Dependency checker configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "check_npm": {
+          "type": "boolean",
+          "default": true
+        },
+        "check_docker": {
+          "type": "boolean",
+          "default": true
+        },
+        "check_frameworks": {
+          "type": "boolean",
+          "default": true
+        },
+        "auto_fix_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "blocking_severities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "default": ["critical", "high"]
+        },
+        "generate_dependabot": {
+          "type": "boolean",
+          "default": true
+        },
+        "generate_renovate": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "description": "Review agent configuration",
+      "properties": {
+        "reviewer_timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 600,
+          "default": 300
+        },
+        "allow_single_agent_approval": {
+          "type": "boolean",
+          "default": true
+        },
+        "single_agent_score_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 1.0
+        },
+        "single_agent_minimum_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 7.5
+        },
+        "max_reviewer_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 2
+        },
+        "single_agent_preference": {
+          "type": "string",
+          "enum": ["cursor", "gemini", "any"],
+          "default": "any"
+        },
+        "log_timeouts": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "description": "Retry policy configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "agent_max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        },
+        "agent_initial_interval": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 30,
+          "default": 1.0
+        },
+        "agent_backoff_factor": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2.0
+        },
+        "agent_jitter": {
+          "type": "boolean",
+          "default": true
+        },
+        "implementation_max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 2
+        },
+        "implementation_initial_interval": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 60,
+          "default": 5.0
+        },
+        "implementation_backoff_factor": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2.0
+        },
+        "implementation_jitter": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_total_retries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 10
+        },
+        "max_task_loop_iterations": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 500,
+          "default": 50
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

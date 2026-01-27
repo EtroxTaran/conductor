@@ -2,13 +2,36 @@
 
 Resolves disagreements between reviewers (Cursor/Security vs Gemini/Architecture)
 using weighted authority based on domain expertise.
+
+Keyword matching uses compiled regex patterns with word boundaries to avoid
+false positives from substring matching (e.g., "injection" matching "rejection").
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _compile_pattern(keyword: str) -> re.Pattern:
+    """Compile keyword into regex pattern with word boundaries.
+
+    Args:
+        keyword: Keyword to match (can contain spaces)
+
+    Returns:
+        Compiled regex pattern
+    """
+    # Escape special characters and add word boundaries
+    escaped = re.escape(keyword)
+    return re.compile(rf"\b{escaped}\b", re.IGNORECASE)
+
+
+def _compile_patterns(keywords: list[str]) -> list[re.Pattern]:
+    """Compile multiple keywords into regex patterns."""
+    return [_compile_pattern(k) for k in keywords]
 
 
 @dataclass
@@ -33,7 +56,11 @@ class ResolutionResult:
 
 
 class ConflictResolver:
-    """Resolves verification conflicts using weighted domain expertise."""
+    """Resolves verification conflicts using weighted domain expertise.
+
+    Uses compiled regex patterns for keyword matching to avoid false positives
+    from naive substring matching.
+    """
 
     # Weights for overall score calculation
     # Reflects the general reliability/specialization of each agent
@@ -42,33 +69,58 @@ class ConflictResolver:
         "gemini": 0.4,  # Stronger on high-level architecture/patterns
     }
 
-    # Domain-specific authority override weights
-    # If an issue is flagged in this domain, that agent's voice carries this weight
+    # Domain-specific authority patterns with their authority agent
     # NOTE: Only actual vulnerabilities trigger veto, not process/documentation gaps
-    DOMAIN_AUTHORITY = {
-        "vulnerability": "cursor",
-        "injection": "cursor",  # SQL/Command injection
-        "xss": "cursor",  # Cross-site scripting
-        "csrf": "cursor",  # Cross-site request forgery
-        "rce": "cursor",  # Remote code execution
-        "authentication bypass": "cursor",
-        "authorization bypass": "cursor",
-        "privilege escalation": "cursor",
-    }
-
-    # Keywords that indicate this is a process gap, not an actual vulnerability
-    # These should NOT trigger the authority veto
-    PROCESS_GAP_INDICATORS = [
-        "no security requirements",
-        "not specified",
-        "missing",
-        "lacks",
-        "should include",
-        "should add",
-        "no mention",
-        "not defined",
-        "unclear",
+    # Format: (pattern, authority_agent, domain_name)
+    DOMAIN_PATTERNS = [
+        # Security vulnerabilities (Cursor authority)
+        (_compile_pattern("vulnerability"), "cursor", "vulnerability"),
+        (_compile_pattern("sql injection"), "cursor", "sql injection"),
+        (_compile_pattern("command injection"), "cursor", "command injection"),
+        (_compile_pattern("code injection"), "cursor", "code injection"),
+        (_compile_pattern("injection attack"), "cursor", "injection"),
+        (_compile_pattern("xss"), "cursor", "xss"),
+        (_compile_pattern("cross-site scripting"), "cursor", "xss"),
+        (_compile_pattern("csrf"), "cursor", "csrf"),
+        (_compile_pattern("cross-site request forgery"), "cursor", "csrf"),
+        (_compile_pattern("rce"), "cursor", "rce"),
+        (_compile_pattern("remote code execution"), "cursor", "rce"),
+        (_compile_pattern("authentication bypass"), "cursor", "authentication bypass"),
+        (_compile_pattern("auth bypass"), "cursor", "authentication bypass"),
+        (_compile_pattern("authorization bypass"), "cursor", "authorization bypass"),
+        (_compile_pattern("authz bypass"), "cursor", "authorization bypass"),
+        (_compile_pattern("privilege escalation"), "cursor", "privilege escalation"),
+        (_compile_pattern("privesc"), "cursor", "privilege escalation"),
+        (_compile_pattern("path traversal"), "cursor", "path traversal"),
+        (_compile_pattern("directory traversal"), "cursor", "directory traversal"),
+        (_compile_pattern("insecure deserialization"), "cursor", "deserialization"),
+        (_compile_pattern("ssrf"), "cursor", "ssrf"),
+        (_compile_pattern("server-side request forgery"), "cursor", "ssrf"),
     ]
+
+    # Patterns that indicate process/documentation gaps (not actual vulnerabilities)
+    # These should NOT trigger authority veto
+    PROCESS_GAP_PATTERNS = _compile_patterns(
+        [
+            "no security requirements",
+            "not specified",
+            "missing documentation",
+            "lacks documentation",
+            "should include",
+            "should add",
+            "no mention of",
+            "not defined",
+            "unclear requirements",
+            "missing requirements",
+            "requirements unclear",
+            "consider adding",
+            "recommend adding",
+            "suggest adding",
+            "would benefit from",
+            "needs documentation",
+            "should document",
+        ]
+    )
 
     def __init__(self, weights: Optional[dict[str, float]] = None):
         self.weights = weights or self.DEFAULT_WEIGHTS
@@ -211,25 +263,29 @@ class ConflictResolver:
         """Check if any blocker is from the authority for that domain.
 
         Only triggers veto for actual vulnerabilities, not process/documentation gaps.
+        Uses compiled regex patterns with word boundaries for accurate matching.
         """
         for item in blockers:
             agent = item["agent"]
-            issue_text = str(item["issue"]).lower()
+            issue_text = str(item["issue"])
 
             # Skip if this looks like a process gap rather than actual vulnerability
             if self._is_process_gap(issue_text):
                 continue
 
-            # Check keywords against domains
-            for domain, authority in self.DOMAIN_AUTHORITY.items():
-                if domain in issue_text and agent == authority:
-                    return f"{agent.title()} flagged {domain.upper()} issue: {item['issue']}"
+            # Check patterns against domains
+            for pattern, authority, domain_name in self.DOMAIN_PATTERNS:
+                if pattern.search(issue_text) and agent == authority:
+                    return f"{agent.title()} flagged {domain_name.upper()} issue: {item['issue']}"
 
         return None
 
     def _is_process_gap(self, issue_text: str) -> bool:
-        """Check if issue text indicates a process gap rather than actual vulnerability."""
-        for indicator in self.PROCESS_GAP_INDICATORS:
-            if indicator in issue_text:
+        """Check if issue text indicates a process gap rather than actual vulnerability.
+
+        Uses compiled regex patterns for accurate matching with word boundaries.
+        """
+        for pattern in self.PROCESS_GAP_PATTERNS:
+            if pattern.search(issue_text):
                 return True
         return False

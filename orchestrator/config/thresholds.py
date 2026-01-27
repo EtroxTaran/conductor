@@ -1,6 +1,7 @@
 """Configurable thresholds for workflow validation and quality gates.
 
 Provides project-type specific defaults and loading from .project-config.json.
+Validates configuration against JSON schema when loaded.
 """
 
 import copy
@@ -8,10 +9,121 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from ..validators.security_scanner import Severity
 
 logger = logging.getLogger(__name__)
+
+# Path to JSON schema for validation
+_SCHEMA_PATH = Path(__file__).parent / "project-config.schema.json"
+_SCHEMA_CACHE: Optional[dict] = None
+
+
+class ConfigValidationError(Exception):
+    """Raised when configuration fails schema validation."""
+
+    def __init__(self, message: str, errors: Optional[list] = None):
+        super().__init__(message)
+        self.errors = errors or []
+
+
+def _get_schema() -> dict:
+    """Load and cache the JSON schema."""
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is None:
+        if _SCHEMA_PATH.exists():
+            _SCHEMA_CACHE = json.loads(_SCHEMA_PATH.read_text())
+        else:
+            logger.warning(f"Schema file not found: {_SCHEMA_PATH}")
+            _SCHEMA_CACHE = {}
+    return _SCHEMA_CACHE
+
+
+def validate_config(config_data: dict, raise_on_error: bool = False) -> tuple[bool, list[str]]:
+    """Validate configuration data against JSON schema.
+
+    Args:
+        config_data: Configuration dictionary to validate
+        raise_on_error: If True, raise ConfigValidationError on failure
+
+    Returns:
+        Tuple of (is_valid, list of error messages)
+    """
+    schema = _get_schema()
+    if not schema:
+        # No schema available - skip validation
+        return True, []
+
+    errors = []
+
+    try:
+        # Try to import jsonschema for validation
+        import jsonschema
+        from jsonschema import ValidationError, validate
+
+        try:
+            validate(instance=config_data, schema=schema)
+            return True, []
+        except ValidationError:
+            # Collect all validation errors
+            validator = jsonschema.Draft202012Validator(schema)
+            for error in validator.iter_errors(config_data):
+                path = ".".join(str(p) for p in error.absolute_path) or "<root>"
+                errors.append(f"{path}: {error.message}")
+
+    except ImportError:
+        # jsonschema not installed - do basic validation
+        logger.debug("jsonschema not installed, using basic validation")
+        errors = _basic_validate(config_data)
+
+    if errors and raise_on_error:
+        raise ConfigValidationError(
+            f"Configuration validation failed with {len(errors)} error(s)",
+            errors=errors,
+        )
+
+    return len(errors) == 0, errors
+
+
+def _basic_validate(config_data: dict) -> list[str]:
+    """Basic validation without jsonschema library.
+
+    Checks for common issues like invalid types.
+    """
+    errors = []
+
+    # Validate known fields
+    validators = {
+        "project_type": lambda v: isinstance(v, str),
+        "validation.validation_threshold": lambda v: isinstance(v, int | float) and 0 <= v <= 10,
+        "validation.verification_threshold": lambda v: isinstance(v, int | float) and 0 <= v <= 10,
+        "validation.max_phase_retries": lambda v: isinstance(v, int) and v >= 1,
+        "quality.coverage_threshold": lambda v: isinstance(v, int | float) and 0 <= v <= 100,
+        "quality.coverage_blocking": lambda v: isinstance(v, bool),
+        "security.enabled": lambda v: isinstance(v, bool),
+        "workflow.parallel_workers": lambda v: isinstance(v, int) and v >= 1,
+        "retry.enabled": lambda v: isinstance(v, bool),
+        "retry.max_task_loop_iterations": lambda v: isinstance(v, int) and v >= 10,
+    }
+
+    for path, validator in validators.items():
+        value = _get_nested(config_data, path)
+        if value is not None and not validator(value):
+            errors.append(f"{path}: invalid value {value!r}")
+
+    return errors
+
+
+def _get_nested(data: dict, path: str) -> Optional[any]:
+    """Get nested value from dict using dot notation."""
+    keys = path.split(".")
+    current = data
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
 
 
 @dataclass
@@ -96,6 +208,69 @@ class ResearchConfig:
             return list(self.ref_tools)
         # Fallback to basic web tools for docs if ref not available
         return list(self.basic_web_tools)
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry policies in LangGraph workflow.
+
+    Controls how agent nodes retry on transient failures.
+    """
+
+    # Whether retry is enabled at all
+    enabled: bool = True
+
+    # Agent retry policy (Cursor, Gemini nodes)
+    agent_max_attempts: int = 3
+    agent_initial_interval: float = 1.0  # seconds
+    agent_backoff_factor: float = 2.0
+    agent_jitter: bool = True
+
+    # Implementation retry policy (longer intervals)
+    implementation_max_attempts: int = 2
+    implementation_initial_interval: float = 5.0  # seconds
+    implementation_backoff_factor: float = 2.0
+    implementation_jitter: bool = True
+
+    # Circuit breaker - max total retries across all nodes before HITL escalation
+    max_total_retries: int = 10
+
+    # Task loop limit - max iterations through select_task before escalation
+    # Prevents infinite loops when tasks keep failing and retrying
+    max_task_loop_iterations: int = 50
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "agent_max_attempts": self.agent_max_attempts,
+            "agent_initial_interval": self.agent_initial_interval,
+            "agent_backoff_factor": self.agent_backoff_factor,
+            "agent_jitter": self.agent_jitter,
+            "implementation_max_attempts": self.implementation_max_attempts,
+            "implementation_initial_interval": self.implementation_initial_interval,
+            "implementation_backoff_factor": self.implementation_backoff_factor,
+            "implementation_jitter": self.implementation_jitter,
+            "max_total_retries": self.max_total_retries,
+            "max_task_loop_iterations": self.max_task_loop_iterations,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RetryConfig":
+        """Create from dictionary."""
+        return cls(
+            enabled=data.get("enabled", True),
+            agent_max_attempts=data.get("agent_max_attempts", 3),
+            agent_initial_interval=data.get("agent_initial_interval", 1.0),
+            agent_backoff_factor=data.get("agent_backoff_factor", 2.0),
+            agent_jitter=data.get("agent_jitter", True),
+            implementation_max_attempts=data.get("implementation_max_attempts", 2),
+            implementation_initial_interval=data.get("implementation_initial_interval", 5.0),
+            implementation_backoff_factor=data.get("implementation_backoff_factor", 2.0),
+            implementation_jitter=data.get("implementation_jitter", True),
+            max_total_retries=data.get("max_total_retries", 10),
+            max_task_loop_iterations=data.get("max_task_loop_iterations", 50),
+        )
 
 
 @dataclass
@@ -214,6 +389,7 @@ class ProjectConfig:
     quality_gate: QualityGateConfig = field(default_factory=QualityGateConfig)
     dependency: DependencyConfig = field(default_factory=DependencyConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -290,6 +466,7 @@ class ProjectConfig:
                 "single_agent_preference": self.review.single_agent_preference,
                 "log_timeouts": self.review.log_timeouts,
             },
+            "retry": self.retry.to_dict(),
         }
 
 
@@ -437,8 +614,20 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
     if config_file.exists():
         try:
             custom = json.loads(config_file.read_text())
+
+            # Validate against schema
+            is_valid, errors = validate_config(custom)
+            if not is_valid:
+                logger.warning(
+                    f"Config validation warnings for {config_file}:\n"
+                    + "\n".join(f"  - {e}" for e in errors)
+                )
+                # Continue with merge - validation is advisory, not blocking
+
             config = _merge_config(config, custom)
             logger.info(f"Loaded custom config from {config_file}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in {config_file}: {e}")
         except Exception as e:
             logger.warning(f"Error loading config from {config_file}: {e}")
 

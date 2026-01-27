@@ -38,6 +38,9 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
     4. Select first available task
     5. If none available but tasks remain → dependency deadlock → escalate
 
+    This node also increments the task_loop_iterations counter to guard
+    against infinite loops (checked by select_task_router).
+
     Args:
         state: Current workflow state
 
@@ -45,6 +48,10 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
         State updates with current_task_id or next_decision
     """
     logger.info(f"Selecting next task for: {state['project_name']}")
+
+    # Increment iteration counter (checked in router against max_task_loop_iterations)
+    current_iterations = state.get("task_loop_iterations", 0)
+    new_iterations = current_iterations + 1
 
     tasks = state.get("tasks", [])
     completed_ids = set(state.get("completed_task_ids", []))
@@ -62,6 +69,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
             "current_task_ids": [],
             "in_flight_task_ids": [],
             "next_decision": "continue",  # Move to build_verification
+            "task_loop_iterations": new_iterations,
             "updated_at": datetime.now().isoformat(),
         }
 
@@ -91,6 +99,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
                     }
                 ],
                 "next_decision": "escalate",
+                "task_loop_iterations": new_iterations,
                 "updated_at": datetime.now().isoformat(),
             }
         else:
@@ -101,6 +110,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
                 "current_task_ids": [],
                 "in_flight_task_ids": [],
                 "next_decision": "continue",
+                "task_loop_iterations": new_iterations,
                 "updated_at": datetime.now().isoformat(),
             }
 
@@ -145,6 +155,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
         "in_flight_task_ids": task_ids,
         "tasks": updated_tasks,  # Will be merged by reducer
         "next_decision": "continue",
+        "task_loop_iterations": new_iterations,
         "updated_at": datetime.now().isoformat(),
     }
 
