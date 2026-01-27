@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DevOpsOutput",
+  "type": "object",
+  "required": ["agent", "status"],
+  "properties": {
+    "agent": { "const": "devops_engineer" },
+    "status": { "enum": ["success", "partial", "failed"] },
+    "infrastructure_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "resource": { "type": "string" },
+          "action": { "type": "string" }
+        }
+      }
+    },
+    "config_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "deployment_ready": { "type": "boolean" },
+    "rollback_plan": { "type": "string" }
+  }
+}

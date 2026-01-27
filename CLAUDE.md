@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-23 17:03:56 -->
+<!-- Last synced: 2026-01-27 13:18:40 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -874,40 +874,46 @@ The following skills are available for use via the specified commands:
 
 | Skill | Command | Description |
 |-------|---------|-------------|
-| ADD-LESSON | /add-lesson | No description provided |
+| ADD-LESSON | /add-lesson | Add a new lesson learned to shared rules and sync to context files. |
 | API-CONTRACTS-AND-VALIDATION | /api-contracts-and-validation | Define and validate API contracts using Zod |
-| CALL-CURSOR | /call-cursor | No description provided |
-| CALL-GEMINI | /call-gemini | No description provided |
+| CALL-CURSOR | /call-cursor | Invoke the Cursor CLI for security-focused plan validation and code review. |
+| CALL-GEMINI | /call-gemini | Invoke the Gemini CLI for architecture and scalability review. |
 | CODEBASE-VISUALIZER | /codebase-visualizer | Extract diagrams and explain complex logic |
-| DISCOVER | /discover | No description provided |
+| DEBUG | /debug | Systematic debugging methodology with binary search, observability, and root cause analysis |
+| DEPENDENCY-UPDATE | /dependency-update | Safely update dependencies with version analysis, breaking change detection, and rollback planning |
+| DEPLOY | /deploy | Deployment automation with pre-flight checks, rollback plans, and post-deployment verification |
+| DISCOVER | /discover | Read project docs, clarify requirements, and help create Docs/PRODUCT.md. |
 | E2E-WEBAPP-TESTING | /e2e-webapp-testing | Create resilient E2E tests using Playwright/Cypress |
 | FRONTEND-DEV-GUIDELINES | n/a | Standards for React / TypeScript development |
 | GIT-COMMIT-CONVENTIONAL | /git-commit-conventional | Generate conventional commit messages with strict formatting rules |
 | GIT-COMMITTER-ATOMIC | /git-committer-atomic | Plan and create atomic commits ordered by dependencies |
 | GIT-WORKFLOW-HELPER | /git-workflow-helper | Handle common git scenarios, conflicts, and hook failures |
 | GITHUB-ACTIONS-DEBUGGING | /github-actions-debugging | Debug and fix GitHub Actions CI/CD failures |
-| IMPLEMENT-TASK | /implement-task | No description provided |
-| LIST-PROJECTS | /list-projects | No description provided |
-| ORCHESTRATE | /orchestrate | No description provided |
-| PHASE-STATUS | /phase-status | No description provided |
-| PLAN | /plan | No description provided |
-| PLAN-FEATURE | /plan-feature | No description provided |
+| IMPLEMENT-TASK | /implement-task | Implement individual tasks using Task tool workers with TDD. |
+| LIST-PROJECTS | /list-projects | List all available projects in the Conductor workspace with status summaries. |
+| ORCHESTRATE | /orchestrate | Run the full multi-agent workflow with approvals, validation, and verification phases. |
+| PHASE-STATUS | /phase-status | Display current workflow phase status and progress for a project. |
+| PLAN | /plan | Create an interactive implementation plan and task breakdown from PRODUCT.md. |
+| PLAN-FEATURE | /plan-feature | Create implementation plans for features using a Task tool worker. |
+| PR-CREATE | /pr-create | Create GitHub pull requests with comprehensive descriptions and proper review setup |
 | REFACTOR-SAFE-WORKFLOW | /refactor-safe-workflow | Orchestrate safe refactoring with multi-step validation |
 | RELEASE-NOTES-AND-CHANGELOG | /release-notes-and-changelog | Generate release notes from git history |
-| RESOLVE-CONFLICT | /resolve-conflict | No description provided |
+| RESOLVE-CONFLICT | /resolve-conflict | Resolve disagreements between Cursor and Gemini feedback using weighted expertise. |
+| REVIEW-PR | /review-pr | Review GitHub pull requests with structured feedback and actionable comments |
+| SECURITY-SCAN | /security-scan | Run comprehensive security audits including SAST, dependency scanning, and secret detection |
 | SKILL-CREATOR | /skill-creator | Scaffold new skills with standard directory structure |
 | SKILL-EVAL | /skill-eval | Evaluate skill performance against test cases |
-| SKILLS | /skills | No description provided |
-| STATUS | /status | No description provided |
-| SYNC-RULES | /sync-rules | No description provided |
-| TASK | /task | No description provided |
+| SKILLS | /skills | List and categorize all available skills in the Conductor system. |
+| STATUS | /status | Show current workflow progress at a glance. |
+| SYNC-RULES | /sync-rules | Synchronize shared rules into agent context files and headers. |
+| TASK | /task | Implement a single task by ID using TDD. |
 | TDD-OVERNIGHT-DEV | /tdd-overnight-dev | Autonomous Feature-to-Commit TDD loop for long-running sessions |
 | TEST-WRITER-UNIT-INTEGRATION | /test-writer-unit-integration | Generate standardized unit and integration tests |
 | TS-STRICT-GUARDIAN | /ts-strict-guardian | Enforce strict TypeScript guidelines and safety |
 | UI-DESIGN-SYSTEM | /ui-design-system | Authoritative UI/UX Design System Guide based on EtroxTaran/Uiplatformguide |
-| VALIDATE-PLAN | /validate-plan | No description provided |
-| VERIFY-CODE | /verify-code | No description provided |
-| WORKFLOW-MANAGER | /workflow-manager | No description provided |
+| VALIDATE-PLAN | /validate-plan | Run Phase 2 validation with Cursor and Gemini in parallel. |
+| VERIFY-CODE | /verify-code | Run Phase 4 verification with Cursor and Gemini code review. |
+| WORKFLOW-MANAGER | /workflow-manager | Coordinate the multi-agent workflow across planning, validation, implementation, and verification. |
 
 
 ---
@@ -931,8 +937,8 @@ The following rules apply to all agents in the workflow.
 
 ### Phase Execution
 - Never skip phases - each phase builds on the previous
-- Always check `.workflow/state.json` before starting work
-- Update state.json after completing each phase
+- Query `workflow_state` from SurrealDB before starting work
+- Update workflow state in SurrealDB after completing each phase
 - Maximum 3 iterations per phase before escalation
 
 ### TDD Requirement
@@ -956,7 +962,7 @@ The following rules apply to all agents in the workflow.
 ### Context Files
 - Always read CLAUDE.md for workflow rules (or agent-specific context file)
 - Always read PRODUCT.md for requirements
-- Check .workflow/state.json for current state
+- Query SurrealDB `workflow_state` table for current state
 
 ### Documentation Access
 - **Use the Context Map**: Start at `docs/readme.md` to find the correct file.
@@ -1118,8 +1124,8 @@ The following rules apply to all agents in the workflow.
 # Guardrails (All Agents)
 
 <!-- SHARED: This file applies to ALL agents -->
-<!-- Version: 2.0 -->
-<!-- Last Updated: 2026-01-21 -->
+<!-- Version: 2.1 -->
+<!-- Last Updated: 2026-01-27 -->
 
 ## Security Guardrails
 
@@ -1137,6 +1143,119 @@ The following rules apply to all agents in the workflow.
 - Validate and sanitize all external input
 - Use secure defaults (HTTPS, secure cookies)
 - Follow least privilege principle
+
+---
+
+## Input Validation Guardrails
+
+**Use the `orchestrator.security` module for all input validation.**
+
+### SQL Identifiers
+
+All table and field names must be validated against allowlists before use in queries.
+
+```python
+from orchestrator.security import validate_sql_table, validate_sql_field
+
+# Always validate before query construction
+validated_table = validate_sql_table(table_name)
+validated_field = validate_sql_field(field_name)
+await conn.query(f"INFO FOR TABLE {validated_table}")
+```
+
+### Never Do
+- Interpolate unvalidated identifiers into SQL queries
+- Add new tables without updating `ALLOWED_TABLES`
+- Use string concatenation for SQL construction
+
+### Command Execution
+
+All shell commands must use list-form execution to prevent injection.
+
+```python
+import subprocess
+import shlex
+from orchestrator.security import validate_package_name, validate_file_path
+
+# For package installation - validate first
+validated_pkg = validate_package_name(package)
+subprocess.run(["pip", "install", validated_pkg], shell=False)
+
+# For file operations - validate path
+validated_path = validate_file_path(user_path, base_dir)
+subprocess.run(["autopep8", "--in-place", validated_path], shell=False)
+
+# For arbitrary commands - use shlex.split
+cmd_parts = shlex.split(command_string)
+subprocess.run(cmd_parts, shell=False)
+```
+
+### Never Do
+- Use `shell=True` with dynamic input
+- Interpolate user input directly into command strings
+- Trust package names without validation
+
+### Prompt Construction
+
+User-provided content must be sanitized before inclusion in LLM prompts.
+
+```python
+from orchestrator.security import sanitize_prompt_content, detect_prompt_injection
+from orchestrator.agents.prompts import format_prompt
+
+# Check for injection patterns
+suspicious = detect_prompt_injection(user_content)
+if suspicious:
+    logger.warning(f"Potential injection: {suspicious}")
+
+# Sanitize with boundaries
+sanitized = sanitize_prompt_content(
+    user_content,
+    max_length=50000,
+    validate_injection=True,
+    boundary_markers=True,
+)
+
+# Use format_prompt with validation enabled
+prompt = format_prompt(template, validate_injection=True, content=user_content)
+```
+
+### Never Do
+- Insert raw user content directly into prompts
+- Skip injection detection for external content
+- Ignore warnings about detected injection patterns
+
+### Always Do
+- Wrap user content with boundary markers
+- Add defensive instructions after user content
+- Truncate overly long content
+
+### Shell Scripts
+
+Shell scripts must follow safe quoting practices.
+
+```bash
+# Always quote variables
+echo "$VARIABLE"
+
+# Use arrays for multi-word arguments
+ARGS=("--flag1" "value with spaces")
+command "${ARGS[@]}"
+
+# Use single quotes in traps
+trap 'rm -f "$TEMP_FILE"' EXIT
+
+# Check file safety before reading
+if [ -L "$FILE" ]; then
+    echo "Error: symlink" >&2
+    exit 1
+fi
+```
+
+### Never Do
+- Leave variables unquoted
+- Use string variables for multi-argument options
+- Use double quotes in trap commands with variables
 
 ---
 

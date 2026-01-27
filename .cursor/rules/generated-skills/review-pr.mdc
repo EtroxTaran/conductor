@@ -143,7 +143,6 @@ For frequent lookups, `Map` has better performance:
 const cache = new Map();
 cache.get(key);
 ```
-```
 
 **Nitpick (Comment)**:
 ```

@@ -8,8 +8,8 @@
 
 ### Phase Execution
 - Never skip phases - each phase builds on the previous
-- Always check `.workflow/state.json` before starting work
-- Update state.json after completing each phase
+- Query `workflow_state` from SurrealDB before starting work
+- Update workflow state in SurrealDB after completing each phase
 - Maximum 3 iterations per phase before escalation
 
 ### TDD Requirement
@@ -33,7 +33,7 @@
 ### Context Files
 - Always read CLAUDE.md for workflow rules (or agent-specific context file)
 - Always read PRODUCT.md for requirements
-- Check .workflow/state.json for current state
+- Query SurrealDB `workflow_state` table for current state
 
 ### Documentation Access
 - **Use the Context Map**: Start at `docs/readme.md` to find the correct file.

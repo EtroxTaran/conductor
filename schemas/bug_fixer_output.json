@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BugFixerOutput",
+  "type": "object",
+  "required": ["agent", "status", "fix_applied"],
+  "properties": {
+    "agent": { "const": "bug_fixer" },
+    "status": { "enum": ["fixed", "partial", "failed", "needs_info"] },
+    "fix_applied": { "type": "boolean" },
+    "root_cause": { "type": "string" },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "tests_added": { "type": "array", "items": { "type": "string" } },
+    "verification": { "type": "string" }
+  }
+}

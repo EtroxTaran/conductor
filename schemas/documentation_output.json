@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DocumentationOutput",
+  "type": "object",
+  "required": ["agent", "status"],
+  "properties": {
+    "agent": { "const": "documentation_writer" },
+    "status": { "enum": ["complete", "partial", "needs_review"] },
+    "files_created": { "type": "array", "items": { "type": "string" } },
+    "files_updated": { "type": "array", "items": { "type": "string" } },
+    "coverage": { "type": "number", "minimum": 0, "maximum": 100 }
+  }
+}
