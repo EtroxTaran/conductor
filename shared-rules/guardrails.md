@@ -1,7 +1,7 @@
 # Guardrails (All Agents)
 
 <!-- SHARED: This file applies to ALL agents -->
-<!-- Version: 2.1 -->
+<!-- Version: 2.2 -->
 <!-- Last Updated: 2026-01-27 -->
 
 ## Security Guardrails
@@ -165,6 +165,70 @@ Key rules:
 - Clean up temporary files
 - Fix all linter errors before committing
 - Ensure `npm run typecheck` leads to 0 errors
+
+---
+
+## Bug Fix Guardrails (MANDATORY)
+
+**Every bug and issue MUST be fixed with a regression test. No exceptions.**
+
+This rule applies to:
+- The conductor project itself
+- All workflow projects initialized through conductor
+- Any project using the multi-agent orchestration system
+
+### Requirements
+
+1. **Fix the Bug**: Identify root cause and implement a proper fix
+2. **Write Regression Test**: Create a test that:
+   - Fails before the fix is applied
+   - Passes after the fix is applied
+   - Prevents the same bug from recurring
+3. **Document the Fix**: Add a lesson learned entry if the bug reveals a pattern
+
+### Never Do
+- Close a bug without a regression test
+- Mark a bug as "won't fix" without explicit approval
+- Skip testing because "it's a simple fix"
+- Assume manual testing is sufficient
+- Leave bugs partially fixed
+
+### Always Do
+- Write the test FIRST (TDD approach when possible)
+- Test the exact scenario that caused the bug
+- Include edge cases discovered during investigation
+- Verify the test actually catches the bug (run it against unfixed code)
+- Link the test to the bug/issue in comments or commit message
+
+### Test Naming Convention
+
+```
+test_<component>_<bug_description>_regression
+```
+
+Examples:
+- `test_auth_empty_password_bypass_regression`
+- `test_api_rate_limit_overflow_regression`
+- `test_parser_unicode_crash_regression`
+
+### Commit Message Format
+
+```
+fix(<scope>): <description>
+
+Fixes #<issue-number>
+
+- Root cause: <explanation>
+- Regression test: <test file and name>
+```
+
+### Escalation
+
+If a bug cannot be fixed with a regression test (extremely rare):
+1. Document why testing is not possible
+2. Get explicit approval from project owner
+3. Add monitoring/alerting as alternative safeguard
+4. Create a follow-up task to improve testability
 
 ---
 
