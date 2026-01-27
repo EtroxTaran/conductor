@@ -364,6 +364,9 @@ class WorkflowFeatures:
     approval_gates: bool = False  # Human approval gates
     quality_gate: bool = True  # A13 - TypeScript/ESLint/naming checks
     dependency_check: bool = True  # A14 - Outdated packages/Docker security
+    # PRODUCT.md handling
+    require_product_md: bool = False  # If False, PRODUCT.md is optional
+    auto_generate_product_md: bool = True  # Auto-generate from docs/ if missing
 
 
 @dataclass
@@ -420,6 +423,8 @@ class ProjectConfig:
                     "approval_gates": self.workflow.features.approval_gates,
                     "quality_gate": self.workflow.features.quality_gate,
                     "dependency_check": self.workflow.features.dependency_check,
+                    "require_product_md": self.workflow.features.require_product_md,
+                    "auto_generate_product_md": self.workflow.features.auto_generate_product_md,
                 },
                 "approval_phases": self.workflow.approval_phases,
                 "parallel_workers": self.workflow.parallel_workers,
@@ -779,6 +784,10 @@ def _merge_config(base: ProjectConfig, custom: dict) -> ProjectConfig:
             base.workflow.features.quality_gate = bool(f["quality_gate"])
         if "dependency_check" in f:
             base.workflow.features.dependency_check = bool(f["dependency_check"])
+        if "require_product_md" in f:
+            base.workflow.features.require_product_md = bool(f["require_product_md"])
+        if "auto_generate_product_md" in f:
+            base.workflow.features.auto_generate_product_md = bool(f["auto_generate_product_md"])
 
     # Update review config
     if "review" in custom:

@@ -65,6 +65,7 @@ Always output JSON with:
 ## Context Files
 
 Read these for context:
-- `PRODUCT.md` - Feature specification
+- `PRODUCT.md` - Feature specification (optional, auto-generated from docs/ if missing)
+- `Docs/` - Project documentation folder (primary source)
 - `CLAUDE.md` - Workflow rules (orchestrator context)
 - `GEMINI.md` - Your context (this content)

@@ -175,6 +175,23 @@ Lorem ipsum dolor sit amet
         assert result.score == 0.0
         assert any("not found" in str(i.message).lower() for i in result.issues)
 
+    def test_file_not_found_optional(self):
+        """Test validation when file doesn't exist but is optional."""
+        from orchestrator.validators import ProductValidator
+        from orchestrator.validators.product_validator import IssueSeverity
+
+        validator = ProductValidator()
+        result = validator.validate_file("/nonexistent/PRODUCT.md", require_existence=False)
+
+        # Should be valid when file is optional
+        assert result.valid is True
+        assert result.score == 0.0
+        # Issue should be a warning, not an error
+        assert any(
+            i.severity == IssueSeverity.WARNING and "not found" in str(i.message).lower()
+            for i in result.issues
+        )
+
     def test_strict_mode(self):
         """Test strict mode treats warnings as errors."""
         from orchestrator.validators import ProductValidator
@@ -207,6 +224,71 @@ This is a test problem statement that should be long enough to pass.
 
         # Strict mode should be more restrictive
         # (actual result depends on content quality)
+
+
+# =============================================================================
+# ProductGenerator Tests
+# =============================================================================
+
+
+class TestProductGenerator:
+    """Test product generator for auto-generating PRODUCT.md from docs."""
+
+    def test_generate_from_minimal_docs(self):
+        """Test generation from minimal documentation context."""
+        from orchestrator.langgraph.utils.product_generator import generate_product_md_from_docs
+
+        doc_context = {
+            "documents": [
+                {
+                    "path": "overview.md",
+                    "title": "Overview",
+                    "content": "This is a project for testing.",
+                    "category": "product_vision",
+                }
+            ],
+            "product_vision": "A project for testing the generator.",
+            "acceptance_criteria": ["Feature works correctly", "Tests pass"],
+            "architecture_summary": None,
+        }
+
+        result = generate_product_md_from_docs(doc_context)
+
+        assert result is not None
+        assert "# Feature Specification" in result
+        assert "Auto-generated" in result
+        assert "Feature works correctly" in result
+
+    def test_generate_empty_docs(self):
+        """Test generation returns None for empty docs."""
+        from orchestrator.langgraph.utils.product_generator import generate_product_md_from_docs
+
+        doc_context = {"documents": [], "product_vision": None}
+
+        result = generate_product_md_from_docs(doc_context)
+
+        assert result is None
+
+    def test_generate_with_acceptance_criteria(self):
+        """Test generation includes acceptance criteria from docs."""
+        from orchestrator.langgraph.utils.product_generator import generate_product_md_from_docs
+
+        doc_context = {
+            "documents": [{"path": "test.md", "title": "Test", "content": "Test"}],
+            "product_vision": "A test product",
+            "acceptance_criteria": [
+                "Users can login",
+                "Users can logout",
+                "Sessions are secure",
+            ],
+        }
+
+        result = generate_product_md_from_docs(doc_context)
+
+        assert result is not None
+        assert "Users can login" in result
+        assert "Users can logout" in result
+        assert "## Acceptance Criteria" in result
 
 
 # =============================================================================
@@ -564,3 +646,34 @@ class TestProjectConfig:
             assert config.workflow.features.security_scan is False
             # Other features should still be True (default)
             assert config.workflow.features.build_verification is True
+
+    def test_product_md_feature_flags(self):
+        """Test PRODUCT.md optional feature flags."""
+        from orchestrator.config import load_project_config
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+
+            # Default values
+            config = load_project_config(project_dir)
+            assert config.workflow.features.require_product_md is False
+            assert config.workflow.features.auto_generate_product_md is True
+
+            # Override via config file
+            config_file = project_dir / ".project-config.json"
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "workflow": {
+                            "features": {
+                                "require_product_md": True,
+                                "auto_generate_product_md": False,
+                            }
+                        }
+                    }
+                )
+            )
+
+            config = load_project_config(project_dir)
+            assert config.workflow.features.require_product_md is True
+            assert config.workflow.features.auto_generate_product_md is False

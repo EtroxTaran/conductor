@@ -222,26 +222,31 @@ class ProductValidator:
             placeholder_count=placeholder_count,
         )
 
-    def validate_file(self, file_path: str | Path) -> ProductValidationResult:
+    def validate_file(
+        self, file_path: str | Path, require_existence: bool = True
+    ) -> ProductValidationResult:
         """Validate a PRODUCT.md file.
 
         Args:
             file_path: Path to the PRODUCT.md file
+            require_existence: If False, missing file returns valid=True with warning
 
         Returns:
             ProductValidationResult
         """
         path = Path(file_path)
         if not path.exists():
+            # Choose severity based on whether existence is required
+            severity = IssueSeverity.ERROR if require_existence else IssueSeverity.WARNING
             return ProductValidationResult(
-                valid=False,
+                valid=not require_existence,  # Valid if not required
                 score=0.0,
                 issues=[
                     ValidationIssue(
                         section="file",
                         message=f"File not found: {path}",
-                        severity=IssueSeverity.ERROR,
-                        suggestion="Create PRODUCT.md with your feature specification",
+                        severity=severity,
+                        suggestion="Create PRODUCT.md or let the system auto-generate it from docs/",
                     )
                 ],
             )
@@ -422,15 +427,18 @@ class ProductValidator:
         return None
 
 
-def validate_product_file(file_path: str | Path, strict: bool = False) -> ProductValidationResult:
+def validate_product_file(
+    file_path: str | Path, strict: bool = False, require_existence: bool = True
+) -> ProductValidationResult:
     """Convenience function to validate a PRODUCT.md file.
 
     Args:
         file_path: Path to the file
         strict: Whether to use strict mode
+        require_existence: If False, missing file returns valid=True with warning
 
     Returns:
         ProductValidationResult
     """
     validator = ProductValidator(strict_mode=strict)
-    return validator.validate_file(file_path)
+    return validator.validate_file(file_path, require_existence=require_existence)

@@ -2,7 +2,7 @@
 
 
 <!-- AUTO-GENERATED from shared-rules/ -->
-<!-- Last synced: 2026-01-27 14:42:38 -->
+<!-- Last synced: 2026-01-27 15:32:11 -->
 <!-- DO NOT EDIT - Run: python scripts/sync-rules.py -->
 
 Instructions for Claude Code as lead orchestrator.
@@ -31,25 +31,26 @@ The user should add to `projects/<name>/`:
 
 **Required:**
 - **Docs/** folder with documentation (any structure)
-- **Docs/PRODUCT.md** with feature specification
+
+**Optional (Auto-Generated):**
+- **Docs/PRODUCT.md** - Feature specification (auto-generated from docs/ if missing)
 
 **Flexible Docs/ Structure:**
 The Docs/ folder can have ANY structure - flat, nested, however makes sense for your project.
-The only requirement is `PRODUCT.md` exists somewhere in Docs/ (usually at root).
 All `.md` files in Docs/ and subfolders are read automatically.
 
 ```
 projects/<name>/
 ├── Docs/                              <- Documentation (any structure)
-│   ├── PRODUCT.md                     <- Feature specification (REQUIRED)
-│   └── **/*.md                        <- Any other docs (optional)
+│   ├── PRODUCT.md                     <- Feature specification (optional, auto-generated)
+│   └── **/*.md                        <- Any other docs
 ├── CLAUDE.md                          <- Worker coding standards (optional)
 ├── GEMINI.md                          <- Gemini context (optional)
 ├── .cursor/rules                      <- Cursor context (optional)
 └── src/                               <- Application code
 ```
 
-**PRODUCT.md should have these sections:**
+**If PRODUCT.md exists, it should have these sections:**
 - **Feature Name**: Clear name (5-100 chars)
 - **Summary**: What it does (50-500 chars)
 - **Problem Statement**: Why it's needed (min 100 chars)
@@ -61,7 +62,7 @@ projects/<name>/
 
 **IMPORTANT**: No placeholders like `[TODO]`, `[TBD]`, or `...` - these will fail validation!
 
-**Flexible Documentation**: The orchestrator adapts to whatever documentation exists. More docs = better context for planning. At minimum, `Docs/PRODUCT.md` is required.
+**Flexible Documentation**: The orchestrator adapts to whatever documentation exists. More docs = better context for planning. If PRODUCT.md is missing, it will be auto-generated from the docs/ folder.
 
 ### Step 3: Run the Workflow
 ```bash
@@ -85,13 +86,14 @@ Or use the slash command:
 
 ### Step 4: Monitor Progress
 The workflow will:
-1. Validate PRODUCT.md (must score >= 6.0)
-2. Create implementation plan
-3. Cursor + Gemini validate the plan
-4. Worker Claude implements with TDD
-5. Security scan and coverage check
-6. Cursor + Gemini verify the code
-7. Generate completion summary
+1. Discover documentation from Docs/ folder
+2. Validate PRODUCT.md if exists (or auto-generate from docs)
+3. Create implementation plan
+4. Cursor + Gemini validate the plan
+5. Worker Claude implements with TDD
+6. Security scan and coverage check
+7. Cursor + Gemini verify the code
+8. Generate completion summary
 
 ---
 
@@ -194,7 +196,7 @@ conductor/                     <- OUTER LAYER (You - Orchestrator)
 +-- projects/                       <- Project containers (nested mode)
     +-- <project-name>/             <- INNER LAYER (Worker Claude)
         |-- Docs/                   <- Documentation (any structure)
-        |   |-- PRODUCT.md          <- Feature specification (REQUIRED)
+        |   |-- PRODUCT.md          <- Feature specification (optional, auto-generated)
         |   +-- **/*.md             <- Any other docs (flexible)
         |-- CLAUDE.md               <- Worker context (coding rules)
         |-- GEMINI.md               <- Gemini context
@@ -227,8 +229,7 @@ python -m orchestrator --project-path ~/repos/my-project --start
 ```
 
 **Requirements for external projects:**
-- Must have `Docs/PRODUCT.md` with feature specification (or `PRODUCT.md` in root as fallback)
-- Should have `Docs/` folder with supporting documentation
+- Must have `Docs/` folder with documentation (PRODUCT.md is auto-generated if missing)
 - Should have context files (CLAUDE.md, etc.)
 - SurrealDB connection required (`SURREAL_URL` environment variable)
 
@@ -281,7 +282,7 @@ python -m orchestrator --project my-app --start --autonomous
 
 **When to Use Autonomous Mode:**
 - Well-defined projects with comprehensive Docs/ folder
-- Projects with clear Docs/PRODUCT.md and supporting documentation
+- Projects with clear documentation and supporting files
 - Projects where you trust the AI to make reasonable decisions
 - Overnight or batch processing runs
 - When you want to see results quickly and fix issues later
@@ -398,8 +399,8 @@ In CI or non-TTY environments, safe defaults are used:
 
 | Phase | Your Role | DB Storage |
 |-------|-----------|------------|
-| 0 - Product Validation | Validate PRODUCT.md | `phase_outputs` (type=product_validation) |
-| 0.5 - Discovery | Read all docs from Docs/ | `workflow_state.docs_index` |
+| 0 - Documentation Discovery | Read all docs from Docs/, auto-generate PRODUCT.md if missing | `phase_outputs` (type=documentation_discovery) |
+| 0.5 - Product Validation | Validate PRODUCT.md (optional) | `phase_outputs` (type=product_validation) |
 | 1 - Planning | Create implementation plan | `phase_outputs` (type=plan, task_breakdown) |
 | 2 - Validation | Coordinate Cursor + Gemini | `phase_outputs` (type=*_feedback) |
 | 3 - Implementation | **Spawn worker Claude** | `phase_outputs` (type=task_result) |
@@ -1341,14 +1342,14 @@ Key rules:
 **For projects outside the nested `projects/` directory.**
 
 ### Before Running on External Project
-- Verify `PRODUCT.md` exists with proper structure
+- Verify `Docs/` folder exists with documentation (PRODUCT.md is auto-generated if missing)
 - Check project is a git repository (for worktree support)
 - Confirm no uncommitted changes (recommended)
 - Verify SurrealDB connection is configured
 
 ### Never Do
 - Assume external projects have same structure as nested
-- Run workflow without validating PRODUCT.md first
+- Run workflow without checking for docs/ folder first
 - Modify files outside expected locations
 
 ### Always Do

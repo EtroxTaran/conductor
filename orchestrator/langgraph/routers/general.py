@@ -40,8 +40,12 @@ def prerequisites_router(
     errors = state.get("errors", [])
     if errors:
         # Check if any errors are blocking
+        # missing_product_md only blocks if explicitly marked blocking=True
         blocking_errors = [
-            e for e in errors if e.get("type") in ("missing_product_md", "no_agents_available")
+            e
+            for e in errors
+            if e.get("type") == "no_agents_available"
+            or (e.get("type") == "missing_product_md" and e.get("blocking", False))
         ]
         if blocking_errors:
             return "human_escalation"

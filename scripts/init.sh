@@ -140,7 +140,7 @@ EOF
     echo -e "\n${YELLOW}Next steps:${NC}"
     echo -e "  1. Add your Documents/ folder with product vision and architecture docs"
     echo -e "  2. Add context files (CLAUDE.md, GEMINI.md, .cursor/rules)"
-    echo -e "  3. Create PRODUCT.md with feature specification"
+    echo -e "  3. (Optional) Create PRODUCT.md or let it auto-generate from docs/"
     echo -e "  4. Run: ./scripts/init.sh run $name"
 }
 
@@ -325,7 +325,7 @@ Quick Start:
   1. Start the database:      ./scripts/init.sh db start
   2. Initialize a project:    ./scripts/init.sh init my-project
   3. Add your documents:      Place files in projects/my-project/Docs/
-  4. Create PRODUCT.md:       Define your feature specification
+  4. (Optional) PRODUCT.md:   Auto-generated from docs/ if missing
   5. Run the workflow:        ./scripts/init.sh run my-project
 
 Examples:

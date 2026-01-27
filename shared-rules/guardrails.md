@@ -255,14 +255,14 @@ Key rules:
 **For projects outside the nested `projects/` directory.**
 
 ### Before Running on External Project
-- Verify `PRODUCT.md` exists with proper structure
+- Verify `Docs/` folder exists with documentation (PRODUCT.md is auto-generated if missing)
 - Check project is a git repository (for worktree support)
 - Confirm no uncommitted changes (recommended)
 - Verify SurrealDB connection is configured
 
 ### Never Do
 - Assume external projects have same structure as nested
-- Run workflow without validating PRODUCT.md first
+- Run workflow without checking for docs/ folder first
 - Modify files outside expected locations
 
 ### Always Do
