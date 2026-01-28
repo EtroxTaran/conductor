@@ -166,6 +166,95 @@ class TestCursorReviewNode:
         assert execution["template_name"] == "code_review"
 
 
+class TestExternalProjectFallback:
+    """Tests for external project fallback (no agents/ directory).
+
+    Regression tests for external projects without an agents/ directory.
+    The verification nodes should fall back to direct agent invocation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cursor_review_falls_back_to_direct_agent(self, workflow_state_phase_4):
+        """Test cursor review falls back to CursorAgent when agents/ dir missing."""
+        mock_runner = MagicMock()
+        mock_runner.has_agents_dir = MagicMock(return_value=False)
+
+        mock_cursor_agent_instance = MagicMock()
+        mock_cursor_agent_instance.run = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                output='{"score": 7.5, "approved": true, "findings": []}',
+                parsed_output={"score": 7.5, "approved": True, "findings": []},
+                error=None,
+            )
+        )
+        mock_cursor_agent_class = MagicMock(return_value=mock_cursor_agent_instance)
+
+        with patch(
+            "orchestrator.langgraph.nodes.verification.SpecialistRunner",
+            return_value=mock_runner,
+        ), patch(
+            "orchestrator.agents.cursor_agent.CursorAgent",
+            mock_cursor_agent_class,
+        ), patch(
+            "orchestrator.db.repositories.phase_outputs.get_phase_output_repository"
+        ), patch(
+            "orchestrator.storage.async_utils.run_async"
+        ):
+            result = await cursor_review_node(workflow_state_phase_4)
+
+        # Verify fallback was used (has_agents_dir was called)
+        mock_runner.has_agents_dir.assert_called_once()
+        # CursorAgent was instantiated and run was called
+        mock_cursor_agent_class.assert_called_once()
+        mock_cursor_agent_instance.run.assert_called_once()
+
+        assert "verification_feedback" in result
+        feedback = result["verification_feedback"]["cursor"]
+        assert feedback.approved is True
+        assert feedback.score == 7.5
+
+    @pytest.mark.asyncio
+    async def test_gemini_review_falls_back_to_direct_agent(self, workflow_state_phase_4):
+        """Test gemini review falls back to GeminiAgent when agents/ dir missing."""
+        mock_runner = MagicMock()
+        mock_runner.has_agents_dir = MagicMock(return_value=False)
+
+        mock_gemini_agent_instance = MagicMock()
+        mock_gemini_agent_instance.run = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                output='{"score": 8.0, "approved": true, "comments": []}',
+                error=None,
+            )
+        )
+        mock_gemini_agent_class = MagicMock(return_value=mock_gemini_agent_instance)
+
+        with patch(
+            "orchestrator.langgraph.nodes.verification.SpecialistRunner",
+            return_value=mock_runner,
+        ), patch(
+            "orchestrator.agents.gemini_agent.GeminiAgent",
+            mock_gemini_agent_class,
+        ), patch(
+            "orchestrator.db.repositories.phase_outputs.get_phase_output_repository"
+        ), patch(
+            "orchestrator.storage.async_utils.run_async"
+        ):
+            result = await gemini_review_node(workflow_state_phase_4)
+
+        # Verify fallback was used
+        mock_runner.has_agents_dir.assert_called_once()
+        # GeminiAgent was instantiated and run was called
+        mock_gemini_agent_class.assert_called_once()
+        mock_gemini_agent_instance.run.assert_called_once()
+
+        assert "verification_feedback" in result
+        feedback = result["verification_feedback"]["gemini"]
+        assert feedback.approved is True
+        assert feedback.score == 8.0
+
+
 class TestGeminiReviewNode:
     """Tests for gemini_review_node."""
 

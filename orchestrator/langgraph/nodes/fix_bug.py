@@ -87,8 +87,32 @@ Please analyze the error and fix the code to make tests pass.
     try:
         runner = SpecialistRunner(project_dir)
 
-        # Run A05-bug-fixer
-        result = await asyncio.to_thread(runner.create_agent("A05-bug-fixer").run, prompt)
+        # Check if agents/ directory exists for specialist agents
+        if runner.has_agents_dir():
+            # Use specialist agent A05-bug-fixer
+            agent = runner.create_agent("A05-bug-fixer")
+        else:
+            # Fall back to direct ClaudeAgent invocation for external projects
+            logger.info("Agents directory not found, using direct ClaudeAgent for bug fixing")
+            from ...agents.claude_agent import ClaudeAgent
+
+            agent = ClaudeAgent(
+                project_dir,
+                allowed_tools=[
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "Glob",
+                    "Grep",
+                    "Bash(npm*)",
+                    "Bash(pytest*)",
+                    "Bash(npx*)",
+                    "Bash(git*)",
+                ],
+            )
+
+        # Run the bug fixer
+        result = await asyncio.to_thread(agent.run, prompt)
 
         if not result.success:
             raise Exception(result.error or "Bug fixing failed")
@@ -137,17 +161,20 @@ def _format_list(items: list[str]) -> str:
     return "\n".join(f"- {i}" for i in items)
 
 
-def _parse_output(stdout: str) -> dict:
+def _parse_output(stdout: str) -> dict[str, Any]:
     """Parse JSON output from agent."""
     try:
         if not stdout:
-            return {{}}
+            return {}
         # Try finding JSON block
         import re
 
-        json_match = re.search(r"{{[\s\S]*}}", stdout)
+        json_match = re.search(r"\{[\s\S]*\}", stdout)
         if json_match:
-            return json.loads(json_match.group(0))
-        return {{}}
+            result = json.loads(json_match.group(0))
+            if isinstance(result, dict):
+                return result
+            return {}
+        return {}
     except Exception:
-        return {{}}
+        return {}

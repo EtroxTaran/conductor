@@ -234,7 +234,7 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
 
     if use_unified:
         logger.info(f"Using unified loop for task {task_id}")
-        return await implement_with_unified_loop(
+        return await implement_with_unified_loop(  # type: ignore[no-any-return]
             state=state,
             task=task,
             updated_task=updated_task,
@@ -244,7 +244,7 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
         )
     elif use_ralph:
         logger.info(f"Using Ralph Wiggum loop for task {task_id}")
-        return await implement_with_ralph_loop(
+        return await implement_with_ralph_loop(  # type: ignore[no-any-return]
             state=state,
             task=task,
             updated_task=updated_task,
@@ -254,7 +254,7 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
         )
     else:
         logger.info(f"Using standard implementation for task {task_id}")
-        return await implement_standard(
+        return await implement_standard(  # type: ignore[no-any-return]
             state=state,
             task=task,
             updated_task=updated_task,
@@ -281,7 +281,30 @@ def _run_task_in_worktree(
     """
     runner = SpecialistRunner(worktree_path)
     prompt = build_task_prompt(task, state, worktree_path)
-    result = runner.create_agent("A04-implementer").run(prompt)
+
+    # Check if agents/ directory exists for specialist agents
+    if runner.has_agents_dir():
+        agent = runner.create_agent("A04-implementer")
+    else:
+        # Fall back to direct ClaudeAgent invocation for external projects
+        from ....agents.claude_agent import ClaudeAgent
+
+        agent = ClaudeAgent(
+            worktree_path,
+            allowed_tools=[
+                "Read",
+                "Write",
+                "Edit",
+                "Glob",
+                "Grep",
+                "Bash(npm*)",
+                "Bash(pytest*)",
+                "Bash(npx*)",
+                "Bash(git*)",
+            ],
+        )
+
+    result = agent.run(prompt)
 
     return {
         "success": result.success,
@@ -406,27 +429,30 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
             for (worktree, task), result in zip(worktrees, completed, strict=False):
                 task_id = task.get("id", "unknown")
 
-                if isinstance(result, Exception):
+                # Normalize result to dict
+                if isinstance(result, BaseException):
                     logger.error(f"Task {task_id} failed in worktree: {result}")
-                    result = {
+                    result_dict: dict[str, Any] = {
                         "success": False,
                         "error": str(result),
                         "output": None,
                     }
+                else:
+                    result_dict = result
 
-                if result.get("success"):
+                if result_dict.get("success"):
                     try:
                         commit_msg = f"Task: {task.get('title', task_id)}"
                         wt_manager.merge_worktree(worktree, commit_msg)
                     except WorktreeError as e:
                         logger.error(f"Failed to merge worktree for task {task_id}: {e}")
-                        result = {
+                        result_dict = {
                             "success": False,
                             "error": str(e),
-                            "output": result.get("output"),
+                            "output": result_dict.get("output"),
                         }
 
-                results.append({"task_id": task_id, **result})
+                results.append({"task_id": task_id, **result_dict})
 
     except WorktreeError as e:
         logger.error(f"Parallel implementation failed: {e}")

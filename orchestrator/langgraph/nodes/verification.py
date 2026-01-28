@@ -173,8 +173,19 @@ TEST RESULTS:
     try:
         runner = SpecialistRunner(project_dir)
 
-        # Run A07-security-reviewer
-        result = await asyncio.to_thread(runner.create_agent("A07-security-reviewer").run, prompt)
+        # Check if agents/ directory exists for specialist agents
+        if runner.has_agents_dir():
+            # Use specialist agent A07-security-reviewer
+            agent = runner.create_agent("A07-security-reviewer")
+        else:
+            # Fall back to direct CursorAgent invocation for external projects
+            logger.info("Agents directory not found, using direct CursorAgent for review")
+            from ...agents.cursor_agent import CursorAgent
+
+            agent = CursorAgent(project_dir)
+
+        # Run the review
+        result = await asyncio.to_thread(agent.run, prompt)
 
         if not result.success:
             raise Exception(result.error or "Cursor review failed")
@@ -379,8 +390,19 @@ FILES IMPLEMENTED:
     try:
         runner = SpecialistRunner(project_dir)
 
-        # Run A08-code-reviewer
-        result = await asyncio.to_thread(runner.create_agent("A08-code-reviewer").run, prompt)
+        # Check if agents/ directory exists for specialist agents
+        if runner.has_agents_dir():
+            # Use specialist agent A08-code-reviewer
+            agent = runner.create_agent("A08-code-reviewer")
+        else:
+            # Fall back to direct GeminiAgent invocation for external projects
+            logger.info("Agents directory not found, using direct GeminiAgent for review")
+            from ...agents.gemini_agent import GeminiAgent
+
+            agent = GeminiAgent(project_dir)
+
+        # Run the review
+        result = await asyncio.to_thread(agent.run, prompt)
 
         if not result.success:
             raise Exception(result.error or "Gemini review failed")
@@ -737,7 +759,7 @@ async def _get_changed_files(project_dir: Path) -> list[str]:
     """
     import subprocess
 
-    files = set()
+    files: set[str] = set()
 
     try:
         # Uncommitted changes
@@ -775,7 +797,7 @@ async def _get_changed_files(project_dir: Path) -> list[str]:
 
 async def _collect_changed_files(state: WorkflowState, project_dir: Path) -> list[str]:
     """Collect changed files from state and git."""
-    files = set()
+    files: set[str] = set()
     impl_result = state.get("implementation_result", {})
     if impl_result:
         files.update(impl_result.get("files_created", []) or [])
