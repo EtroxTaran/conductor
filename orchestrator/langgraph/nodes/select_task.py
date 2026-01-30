@@ -49,9 +49,9 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
     """
     logger.info(f"Selecting next task for: {state['project_name']}")
 
-    # Increment iteration counter (checked in router against max_task_loop_iterations)
+    # Track iteration counter — only incremented on retry of same task (see below)
     current_iterations = state.get("task_loop_iterations", 0)
-    new_iterations = current_iterations + 1
+    previous_task_id = state.get("current_task_id")
 
     tasks = state.get("tasks", [])
     completed_ids = set(state.get("completed_task_ids", []))
@@ -69,7 +69,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
             "current_task_ids": [],
             "in_flight_task_ids": [],
             "next_decision": "continue",  # Move to build_verification
-            "task_loop_iterations": new_iterations,
+            "task_loop_iterations": current_iterations,
             "updated_at": datetime.now().isoformat(),
         }
 
@@ -84,6 +84,16 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
         ]
 
         if pending_tasks:
+            # Check for tasks blocked by failed dependencies (Fix 10)
+            unblockable = []
+            for task in pending_tasks:
+                deps = task.get("dependencies", [])
+                if any(dep in failed_ids for dep in deps):
+                    unblockable.append(task.get("id"))
+
+            if unblockable:
+                logger.warning(f"Tasks {unblockable} are blocked by failed dependencies")
+
             # There are pending tasks but none available - deadlock
             logger.error("Dependency deadlock detected - no tasks available but work remains")
             return {
@@ -95,11 +105,12 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
                         "type": "dependency_deadlock",
                         "message": f"Dependency deadlock: {len(pending_tasks)} tasks pending but none available",
                         "pending_tasks": [t.get("id") for t in pending_tasks],
+                        "unblockable_tasks": unblockable,
                         "timestamp": datetime.now().isoformat(),
                     }
                 ],
                 "next_decision": "escalate",
-                "task_loop_iterations": new_iterations,
+                "task_loop_iterations": current_iterations,
                 "updated_at": datetime.now().isoformat(),
             }
         else:
@@ -110,7 +121,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
                 "current_task_ids": [],
                 "in_flight_task_ids": [],
                 "next_decision": "continue",
-                "task_loop_iterations": new_iterations,
+                "task_loop_iterations": current_iterations,
                 "updated_at": datetime.now().isoformat(),
             }
 
@@ -130,6 +141,13 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
 
     task_ids = [task["id"] for task in selected_tasks]
     logger.info(f"Selected task batch: {task_ids}")
+
+    # Only increment iteration counter on retry of the same task, not new task selection
+    selected_primary_id = task_ids[0] if task_ids else None
+    if selected_primary_id == previous_task_id:
+        new_iterations = current_iterations + 1  # Retry of same task
+    else:
+        new_iterations = current_iterations  # New task, don't count
 
     # Update task statuses to in_progress
     updated_tasks = []
@@ -162,7 +180,7 @@ async def select_next_task_node(state: WorkflowState) -> dict[str, Any]:
 
 def _sort_tasks_by_priority(
     tasks: list[Task],
-    milestones: list[dict],
+    milestones: list[Any],
 ) -> list[Task]:
     """Sort tasks by priority, milestone order, and task ID.
 

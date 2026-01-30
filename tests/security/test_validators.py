@@ -288,6 +288,23 @@ class TestCoverageCommandValidation:
         with pytest.raises(SecurityValidationError, match="non-empty string"):
             validate_coverage_command("")
 
+    def test_redirect_operators_blocked(self):
+        """Redirect operators > and < must be rejected (Fix H1 regression)."""
+        with pytest.raises(SecurityValidationError, match="dangerous character"):
+            validate_coverage_command("pytest --cov > /tmp/exfil.txt")
+        with pytest.raises(SecurityValidationError, match="dangerous character"):
+            validate_coverage_command("pytest --cov < /dev/null")
+
+    def test_newline_injection_blocked(self):
+        """Newlines in coverage commands must be rejected (Fix H1 regression)."""
+        with pytest.raises(SecurityValidationError, match="dangerous character"):
+            validate_coverage_command("pytest --cov\nrm -rf /")
+
+    def test_backslash_blocked(self):
+        """Backslash in coverage commands must be rejected (Fix H1 regression)."""
+        with pytest.raises(SecurityValidationError, match="dangerous character"):
+            validate_coverage_command("pytest --cov \\n evil")
+
 
 class TestPromptInjectionDetection:
     """Tests for prompt injection detection."""

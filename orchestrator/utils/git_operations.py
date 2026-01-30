@@ -1,8 +1,13 @@
 """Git operations manager for efficient batched git operations."""
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
+
+from orchestrator.utils.safe_env import git_env
+
+logger = logging.getLogger(__name__)
 
 
 class GitOperationsManager:
@@ -76,7 +81,7 @@ class GitOperationsManager:
 
         try:
             # Pass commit message via environment variable for safety
-            env = {**__import__("os").environ, "GIT_COMMIT_MSG": message}
+            env = git_env({"GIT_COMMIT_MSG": message})
             result = subprocess.run(
                 ["bash", "-c", script],
                 cwd=self.project_dir,
@@ -92,8 +97,10 @@ class GitOperationsManager:
             return None
 
         except subprocess.TimeoutExpired:
+            logger.warning("git auto_commit timed out")
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"git auto_commit failed: {e}")
             return None
 
     def get_status(self) -> Optional[str]:
@@ -116,7 +123,8 @@ class GitOperationsManager:
             if result.returncode == 0:
                 return result.stdout.strip()
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"git status failed: {e}")
             return None
 
     def has_changes(self) -> bool:
@@ -149,7 +157,8 @@ class GitOperationsManager:
                 timeout=30,
             )
             return result.returncode == 0
-        except Exception:
+        except Exception as e:
+            logger.warning(f"git reset failed: {e}")
             return False
 
     def get_changed_files(self, base_ref: str = "HEAD~1") -> list[str]:
@@ -175,7 +184,8 @@ class GitOperationsManager:
             if result.returncode == 0 and result.stdout:
                 return result.stdout.strip().split("\n")
             return []
-        except Exception:
+        except Exception as e:
+            logger.warning(f"git diff failed: {e}")
             return []
 
     def invalidate_cache(self) -> None:

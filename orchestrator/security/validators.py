@@ -410,7 +410,7 @@ def validate_coverage_command(cmd: str) -> str:
         if cmd_clean.startswith(allowed):
             # Additional check: no shell metacharacters after the base command
             suffix = cmd_clean[len(allowed) :]
-            dangerous = {";", "&", "|", "`", "$", "(", ")"}
+            dangerous = {";", "&", "|", "`", "$", "(", ")", "{", "}", "<", ">", "\n", "\r", "\\"}
             for char in dangerous:
                 if char in suffix:
                     raise SecurityValidationError(

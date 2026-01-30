@@ -43,6 +43,10 @@ class InsecureAsyncWsSurrealConnection(AsyncWsSurrealConnection):
         # Create insecure SSL context if using wss://
         ssl_context = None
         if self.raw_url.startswith("wss://"):
+            logger.warning(
+                "SSL verification DISABLED for %s — do not use in production",
+                self.raw_url.split("/")[2],  # hostname only, no path
+            )
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE

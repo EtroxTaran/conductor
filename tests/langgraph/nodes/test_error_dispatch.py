@@ -332,3 +332,44 @@ class TestErrorDispatchDecisionPriority:
 
         # Should go to human despite low retry count
         assert result["next_decision"] == "use_human"
+
+
+class TestCircuitBreakerOpens:
+    """Tests for circuit breaker opening after max retries (Fix 7)."""
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_set_after_max_retries(self, minimal_workflow_state):
+        """Circuit breaker should be set to True when max retries exceeded (Fix H4 regression)."""
+        minimal_workflow_state["error_context"] = {
+            "error_type": "AssertionError",
+            "error_message": "Test still failing",
+            "source_node": "implementation",
+            "recoverable": True,
+            "retry_count": MAX_ERROR_RETRIES,  # At max
+        }
+        minimal_workflow_state["fixer_enabled"] = True
+        minimal_workflow_state["fixer_circuit_breaker_open"] = False
+
+        result = await error_dispatch_node(minimal_workflow_state)
+
+        assert result["next_decision"] == "use_human"
+        assert result.get("fixer_circuit_breaker_open") is True
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_not_set_below_max_retries(self, minimal_workflow_state):
+        """Circuit breaker should NOT be set when below max retries."""
+        minimal_workflow_state["error_context"] = {
+            "error_type": "PermissionError",
+            "error_message": "Access denied",
+            "source_node": "test",
+            "recoverable": True,
+            "retry_count": 0,
+        }
+        minimal_workflow_state["fixer_enabled"] = True
+        minimal_workflow_state["fixer_circuit_breaker_open"] = False
+
+        result = await error_dispatch_node(minimal_workflow_state)
+
+        # Routed to human because of PermissionError type, but no circuit breaker
+        assert result["next_decision"] == "use_human"
+        assert "fixer_circuit_breaker_open" not in result

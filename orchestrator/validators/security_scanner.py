@@ -406,7 +406,8 @@ class SecurityScanner:
         try:
             content = file_path.read_text(encoding="utf-8", errors="ignore")
             lines = content.splitlines()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to read file for security scan: {file_path}: {e}")
             return findings
 
         # Determine applicable languages based on extension
@@ -425,7 +426,7 @@ class SecurityScanner:
             if not (rule_languages & applicable_languages):
                 continue
 
-            pattern = rule["pattern"]
+            pattern = str(rule["pattern"])
 
             try:
                 regex = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
@@ -449,14 +450,16 @@ class SecurityScanner:
 
                         findings.append(
                             SecurityFinding(
-                                rule_id=rule["id"],
-                                severity=rule["severity"],
-                                message=rule["message"],
+                                rule_id=str(rule["id"]),
+                                severity=rule["severity"],  # type: ignore[arg-type]
+                                message=str(rule["message"]),
                                 file_path=rel_path,
                                 line_number=i,
                                 line_content=line.strip(),
-                                suggestion=rule.get("suggestion"),
-                                cwe_id=rule.get("cwe"),
+                                suggestion=str(rule["suggestion"])
+                                if rule.get("suggestion")
+                                else None,
+                                cwe_id=str(rule["cwe"]) if rule.get("cwe") else None,
                             )
                         )
 
@@ -481,7 +484,7 @@ class SecurityScanner:
         lines = content.splitlines()
 
         for rule in SECURITY_RULES:
-            pattern = rule["pattern"]
+            pattern = str(rule["pattern"])
 
             try:
                 regex = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
@@ -494,14 +497,16 @@ class SecurityScanner:
                     if regex.search(line):
                         findings.append(
                             SecurityFinding(
-                                rule_id=rule["id"],
-                                severity=rule["severity"],
-                                message=rule["message"],
+                                rule_id=str(rule["id"]),
+                                severity=rule["severity"],  # type: ignore[arg-type]
+                                message=str(rule["message"]),
                                 file_path=filename,
                                 line_number=i,
                                 line_content=line.strip(),
-                                suggestion=rule.get("suggestion"),
-                                cwe_id=rule.get("cwe"),
+                                suggestion=str(rule["suggestion"])
+                                if rule.get("suggestion")
+                                else None,
+                                cwe_id=str(rule["cwe"]) if rule.get("cwe") else None,
                             )
                         )
 

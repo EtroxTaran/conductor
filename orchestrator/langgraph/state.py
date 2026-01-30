@@ -4,12 +4,15 @@ Defines the TypedDict state used by the workflow graph, including
 reducers for merging parallel execution results.
 """
 
+import logging
 import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Optional, TypedDict, cast
+
+logger = logging.getLogger(__name__)
 
 # ============== ERROR CONTEXT ==============
 # Rich error context for the Bugfixer agent
@@ -310,6 +313,11 @@ def _append_executions(
 
     # Keep only most recent executions if over limit
     if len(result) > MAX_EXECUTION_HISTORY:
+        dropped = len(result) - MAX_EXECUTION_HISTORY
+        logger.warning(
+            f"Execution history truncated: dropped {dropped} oldest entries "
+            f"(limit: {MAX_EXECUTION_HISTORY})"
+        )
         result = result[-MAX_EXECUTION_HISTORY:]
 
     return result
@@ -854,10 +862,6 @@ def _merge_tasks(
     Returns:
         Merged task list
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     if existing is None:
         return list(new)
 
@@ -915,6 +919,19 @@ def _detect_task_conflict(existing: Task, new: Task) -> bool:
     if abs(existing_attempts - new_attempts) > 1:
         return True
 
+    # Conflict if both updates modify key operational fields
+    existing_dict = dict(existing)
+    new_dict = dict(new)
+    conflict_fields = {"error", "files_modified", "files_created", "test_results"}
+    for f in conflict_fields:
+        if f in existing_dict and f in new_dict:
+            if (
+                existing_dict[f] != new_dict[f]
+                and existing_dict[f] is not None
+                and new_dict[f] is not None
+            ):
+                return True
+
     return False
 
 
@@ -928,7 +945,16 @@ def _merge_task_fields(existing: Task, new: Task) -> Task:
     Returns:
         Merged task
     """
-    merged: dict[str, Any] = dict(existing)
+    # Deep-copy individual mutable values to avoid shared references
+    # that cause mutations to propagate back to the original task.
+    merged: dict[str, Any] = {}
+    for key, value in existing.items():
+        if isinstance(value, list):
+            merged[key] = list(value)
+        elif isinstance(value, dict):
+            merged[key] = dict(value)
+        else:
+            merged[key] = value
 
     # Update with new values
     for key, value in new.items():

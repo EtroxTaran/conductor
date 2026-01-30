@@ -39,6 +39,14 @@ class SurrealDBSaver(BaseCheckpointSaver):
         super().__init__(serde=serde)
         self.project_name = project_name
 
+    def _deserialize_blob(self, raw: str, label: str) -> Any:
+        """Deserialize a JSON+base64 blob, raising ValueError on corruption."""
+        try:
+            stored = json.loads(raw)
+            return self.serde.loads_typed((stored["type"], base64.b64decode(stored["data"])))
+        except (json.JSONDecodeError, KeyError, Exception) as e:
+            raise ValueError(f"Corrupted {label}: {e}") from e
+
     async def aget_tuple(self, config: dict) -> Optional[CheckpointTuple]:
         """Get a checkpoint tuple from the database."""
         thread_id = config["configurable"]["thread_id"]
@@ -77,16 +85,13 @@ class SurrealDBSaver(BaseCheckpointSaver):
 
             row = result[0]
 
-            # Deserialize checkpoint and metadata
-            # Note: We stored {"type": type, "data": base64(bytes)} so we reconstruct the tuple
-            checkpoint_stored = json.loads(row["checkpoint"])
-            metadata_stored = json.loads(row["metadata"])
-            checkpoint = self.serde.loads_typed(
-                (checkpoint_stored["type"], base64.b64decode(checkpoint_stored["data"]))
-            )
-            metadata = self.serde.loads_typed(
-                (metadata_stored["type"], base64.b64decode(metadata_stored["data"]))
-            )
+            # Deserialize checkpoint and metadata with corruption handling
+            try:
+                checkpoint = self._deserialize_blob(row["checkpoint"], "checkpoint")
+                metadata = self._deserialize_blob(row["metadata"], "metadata")
+            except ValueError as e:
+                logger.error(f"Skipping corrupted checkpoint {row.get('checkpoint_id')}: {e}")
+                return None
             parent_id = row.get("parent_checkpoint_id")
 
             # Load pending writes
@@ -108,10 +113,11 @@ class SurrealDBSaver(BaseCheckpointSaver):
 
             pending_writes = []
             for w in writes_result:
-                value_stored = json.loads(w["value"])
-                deserialized = self.serde.loads_typed(
-                    (value_stored["type"], base64.b64decode(value_stored["data"]))
-                )
+                try:
+                    deserialized = self._deserialize_blob(w["value"], "pending_write")
+                except ValueError as e:
+                    logger.error(f"Skipping corrupted pending write: {e}")
+                    continue
                 pending_writes.append((w["task_id"], w["channel"], deserialized))
 
             return CheckpointTuple(
@@ -157,14 +163,12 @@ class SurrealDBSaver(BaseCheckpointSaver):
             results = await conn.query(query, params)
 
             for row in results:
-                checkpoint_stored = json.loads(row["checkpoint"])
-                metadata_stored = json.loads(row["metadata"])
-                checkpoint = self.serde.loads_typed(
-                    (checkpoint_stored["type"], base64.b64decode(checkpoint_stored["data"]))
-                )
-                metadata = self.serde.loads_typed(
-                    (metadata_stored["type"], base64.b64decode(metadata_stored["data"]))
-                )
+                try:
+                    checkpoint = self._deserialize_blob(row["checkpoint"], "checkpoint")
+                    metadata = self._deserialize_blob(row["metadata"], "metadata")
+                except ValueError as e:
+                    logger.error(f"Skipping corrupted checkpoint in list: {e}")
+                    continue
                 parent_id = row.get("parent_checkpoint_id")
 
                 yield CheckpointTuple(

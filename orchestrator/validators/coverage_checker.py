@@ -219,8 +219,8 @@ class CoverageChecker:
                 if "jest" in deps:
                     return "npx jest --coverage"
 
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to detect coverage command from package.json: {e}")
 
         # Python
         if (self.project_dir / "pyproject.toml").exists():

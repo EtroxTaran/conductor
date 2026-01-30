@@ -39,9 +39,7 @@ class SurrealConfig:
     url: str = field(default_factory=lambda: os.getenv("SURREAL_URL", "ws://localhost:8001/rpc"))
     namespace: str = field(default_factory=lambda: os.getenv("SURREAL_NAMESPACE", "orchestrator"))
     user: str = field(default_factory=lambda: os.getenv("SURREAL_USER", "root"))
-    password: str = field(
-        default_factory=lambda: os.getenv("SURREAL_PASS", "root")  # Default for local development
-    )
+    password: str = field(default_factory=lambda: os.getenv("SURREAL_PASS", ""))
     default_database: str = field(default_factory=lambda: os.getenv("SURREAL_DATABASE", "default"))
     pool_size: int = field(default_factory=lambda: int(os.getenv("SURREAL_POOL_SIZE", "5")))
     connect_timeout: float = field(

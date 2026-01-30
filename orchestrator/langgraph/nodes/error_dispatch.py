@@ -47,14 +47,12 @@ async def error_dispatch_node(state: WorkflowState) -> dict[str, Any]:
 
     # Extract error info
     error_type = "unknown"
-    error_message = "No error details"
     source_node = "unknown"
     recoverable = True
     retry_count = 0
 
     if error_context:
         error_type = error_context.get("error_type", "unknown")
-        error_message = error_context.get("error_message", "No error details")
         source_node = error_context.get("source_node", "unknown")
         recoverable = error_context.get("recoverable", True)
         retry_count = error_context.get("retry_count", 0)
@@ -115,7 +113,11 @@ async def error_dispatch_node(state: WorkflowState) -> dict[str, Any]:
         }
     else:
         logger.info(f"Routing to human_escalation (reason: {skip_reason})")
-        return {
+        result: dict[str, str | bool] = {
             "next_decision": "use_human",
             "updated_at": datetime.now().isoformat(),
         }
+        # Open circuit breaker when max retries exceeded
+        if retry_count >= MAX_ERROR_RETRIES:
+            result["fixer_circuit_breaker_open"] = True
+        return result

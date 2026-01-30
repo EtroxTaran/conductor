@@ -1,9 +1,12 @@
 """Validation utilities for input and feedback schemas."""
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -133,9 +136,9 @@ class AgentFeedbackSchema:
     overall_assessment: AssessmentType
     score: float
     summary: Optional[str] = None
-    items: list[FeedbackItem] = None
-    blockers: list[str] = None
-    warnings: list[str] = None
+    items: list[FeedbackItem] | None = None
+    blockers: list[str] | None = None
+    warnings: list[str] | None = None
 
     def __post_init__(self):
         """Normalize values after initialization."""
@@ -209,7 +212,7 @@ class AgentFeedbackSchema:
                     "message": item.message,
                     "suggestion": item.suggestion,
                 }
-                for item in self.items
+                for item in (self.items or [])
             ],
             "blockers": self.blockers,
             "warnings": self.warnings,
@@ -232,8 +235,8 @@ def validate_feedback(agent: str, raw_output: Optional[dict]) -> Optional[dict]:
             # Override reviewer with the actual agent name
             feedback.reviewer = agent
             return feedback.to_dict()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse agent feedback from {agent}: {e}")
 
     # Return minimal valid feedback on failure
     return AgentFeedbackSchema(

@@ -113,7 +113,14 @@ class LiveQueryManager:
 
                 # Ensure it's connected
                 if not self._connection.is_connected:
-                    await self._connection.connect()
+                    try:
+                        await self._connection.connect()
+                    except Exception:
+                        # Return connection to pool on failure to prevent leak
+                        self._pool._stats.active_connections -= 1
+                        await self._pool._available.put(self._connection)
+                        self._connection = None
+                        raise
 
             return self._connection
 
@@ -166,8 +173,11 @@ class LiveQueryManager:
             except Exception as e:
                 logger.error(f"Error in live query callback: {e}")
 
-        # Start live query
-        live_id = await conn.live(table, surreal_callback)
+        # Start live query with timeout to prevent hanging on unresponsive connections
+        live_id = await asyncio.wait_for(
+            conn.live(table, surreal_callback),  # type: ignore[arg-type]
+            timeout=30.0,
+        )
 
         # Store subscription
         sub_id = subscription_id or f"{table}_{live_id}"

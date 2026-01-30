@@ -140,13 +140,29 @@ def _check_budget_before_task(
         return None  # OK to proceed
 
     except AttributeError as e:
-        # Budget manager doesn't have expected interface - continue without budget checks
-        logger.debug(f"Budget manager interface mismatch (continuing anyway): {e}")
-        return None
+        logger.warning(f"Budget manager interface mismatch — escalating: {e}")
+        return {
+            "errors": [
+                {
+                    "type": "budget_check_error",
+                    "message": f"Budget check unavailable: {e}",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ],
+            "next_decision": "escalate",
+        }
     except Exception as e:
-        # Don't block on budget check failures - log and continue
-        logger.warning(f"Budget check failed (continuing anyway): {e}")
-        return None
+        logger.error(f"Budget check failed — escalating: {e}")
+        return {
+            "errors": [
+                {
+                    "type": "budget_check_error",
+                    "message": f"Budget check failed: {e}",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ],
+            "next_decision": "escalate",
+        }
 
 
 async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
@@ -221,8 +237,8 @@ async def implement_task_node(state: WorkflowState) -> dict[str, Any]:
             return budget_result
 
     # Update task attempt count
-    updated_task = dict(task)
-    updated_task["attempts"] = updated_task.get("attempts", 0) + 1
+    updated_task: dict[str, Any] = dict(task)
+    updated_task["attempts"] = int(updated_task.get("attempts") or 0) + 1  # type: ignore[call-overload]
     updated_task["status"] = TaskStatus.IN_PROGRESS
 
     # Update task status in trackers
@@ -370,7 +386,7 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
     updated_tasks = []
     for task in tasks:
         updated = dict(task)
-        updated["attempts"] = updated.get("attempts", 0) + 1
+        updated["attempts"] = int(updated.get("attempts") or 0) + 1  # type: ignore[call-overload]
         updated["status"] = TaskStatus.IN_PROGRESS
         updated_tasks.append(updated)
         update_task_trackers(project_dir, updated["id"], TaskStatus.IN_PROGRESS)
@@ -470,17 +486,17 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
         }
 
     # Apply task-level updates based on results
-    updated_tasks_map = {t["id"]: t for t in updated_tasks}
+    updated_tasks_map: dict[str, Any] = {str(t["id"]): t for t in updated_tasks}
     for result in results:
         task_id = result["task_id"]
-        task = updated_tasks_map.get(task_id, {"id": task_id})
+        current_task: dict[str, Any] = updated_tasks_map.get(task_id, {"id": task_id})
 
         if result.get("success"):
             output = parse_task_output(result.get("output", ""), task_id)
 
             if output.get("status") == "needs_clarification":
-                task["status"] = TaskStatus.BLOCKED
-                task["error"] = f"Needs clarification: {output.get('question', 'Unknown')}"
+                current_task["status"] = TaskStatus.BLOCKED
+                current_task["error"] = f"Needs clarification: {output.get('question', 'Unknown')}"
                 save_clarification_request(project_dir, task_id, output, state["project_name"])
                 errors.append(
                     {
@@ -495,13 +511,13 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
                 continue
 
             save_task_result(project_dir, task_id, output, state["project_name"])
-            task["implementation_notes"] = output.get("implementation_notes", "")
+            current_task["implementation_notes"] = output.get("implementation_notes", "")
         else:
             error_message = result.get("error") or "Task implementation failed"
-            task_update = handle_task_error(task, error_message)
+            task_update = handle_task_error(current_task, error_message)
 
             # Capture updates from error handler
-            task = task_update["tasks"][0]
+            current_task = task_update["tasks"][0]
             errors.extend(task_update.get("errors", []))
             failed_task_ids.extend(task_update.get("failed_task_ids", []))
 
@@ -510,7 +526,7 @@ async def implement_tasks_parallel_node(state: WorkflowState) -> dict[str, Any]:
             else:
                 should_escalate = True
 
-        updated_tasks_map[task_id] = task
+        updated_tasks_map[task_id] = current_task
 
     # Sync to Kanban board
     try:

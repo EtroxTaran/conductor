@@ -119,7 +119,7 @@ class NpmDependencyStrategy(DependencyStrategy):
         Returns:
             List of findings
         """
-        findings = []
+        findings: list[DependencyFinding] = []
 
         # Check if package.json exists
         package_json = project_dir / "package.json"
@@ -136,7 +136,7 @@ class NpmDependencyStrategy(DependencyStrategy):
 
     def _check_outdated(self, project_dir: Path) -> list[DependencyFinding]:
         """Check for outdated packages using npm outdated."""
-        findings = []
+        findings: list[DependencyFinding] = []
 
         try:
             proc = subprocess.run(
@@ -156,7 +156,6 @@ class NpmDependencyStrategy(DependencyStrategy):
 
                 for package, info in outdated.items():
                     current = info.get("current", "")
-                    wanted = info.get("wanted", "")
                     latest = info.get("latest", "")
 
                     # Determine update type
@@ -197,7 +196,7 @@ class NpmDependencyStrategy(DependencyStrategy):
 
     def _check_audit(self, project_dir: Path) -> list[DependencyFinding]:
         """Check for vulnerabilities using npm audit."""
-        findings = []
+        findings: list[DependencyFinding] = []
 
         try:
             proc = subprocess.run(
@@ -263,7 +262,8 @@ class NpmDependencyStrategy(DependencyStrategy):
             current_major = current.split(".")[0].lstrip("^~")
             latest_major = latest.split(".")[0].lstrip("^~")
             return current_major != latest_major
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Version comparison failed for major ({current} vs {latest}): {e}")
             return False
 
     def _is_minor_update(self, current: str, latest: str) -> bool:
@@ -275,7 +275,8 @@ class NpmDependencyStrategy(DependencyStrategy):
                 current_minor = current_parts[1]
                 latest_minor = latest_parts[1]
                 return current_parts[0] == latest_parts[0] and current_minor != latest_minor
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Version comparison failed for minor ({current} vs {latest}): {e}")
             return False
         return False
 
@@ -503,7 +504,7 @@ class FrameworkVersionStrategy(DependencyStrategy):
         Returns:
             List of findings
         """
-        findings = []
+        findings: list[DependencyFinding] = []
 
         package_json = project_dir / "package.json"
         if not package_json.exists():
@@ -567,7 +568,7 @@ class DependencyChecker:
         check_npm: bool = True,
         check_docker: bool = True,
         check_frameworks: bool = True,
-        blocking_severities: list[DependencySeverity] = None,
+        blocking_severities: list[DependencySeverity] | None = None,
     ):
         """Initialize the dependency checker.
 

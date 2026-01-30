@@ -91,6 +91,11 @@ def subgraph_router(state: WorkflowState) -> str:
     decision = state.get("next_decision")
     if decision == "escalate":
         return "human_escalation"
+
+    # After fixer success, resume at task selection (not full task breakdown)
+    if decision == "continue" and state.get("fixer_resolved"):
+        return "select_task"
+
     return "continue"
 
 
@@ -543,6 +548,7 @@ def create_workflow_graph(
         subgraph_router,
         {
             "continue": "task_subgraph",  # Default retry logic
+            "select_task": "task_subgraph",  # Fixer success: resume at task selection
             "human_escalation": "human_escalation",
         },
     )
@@ -591,8 +597,8 @@ class WorkflowRunner:
         self.checkpointer_type = os.environ.get("LANGGRAPH_CHECKPOINTER", "surrealdb")
 
         # Graph will be created in __aenter__
-        self.graph = None
-        self.checkpointer = None
+        self.graph: Any = None
+        self.checkpointer: Any = None
         self.project_config: Optional[ProjectConfig] = None
 
         # Thread/run configuration
@@ -692,22 +698,24 @@ class WorkflowRunner:
             # Update existing state with new execution_mode
             initial_state["execution_mode"] = execution_mode
 
-        run_config = {
-            "configurable": {
-                "thread_id": self.thread_id,
-            },
-            # Increase recursion limit from default 25 to handle complex workflows
-            "recursion_limit": 100,
+        configurable: dict[str, Any] = {
+            "thread_id": self.thread_id,
         }
         if progress_callback:
             # Store callback in configurable for task nodes to emit events
-            run_config["configurable"]["progress_callback"] = progress_callback
+            configurable["progress_callback"] = progress_callback
 
-            def path_emitter(router, decision, state):
+            def path_emitter(router: Any, decision: Any, state: Any) -> None:
                 if hasattr(progress_callback, "on_path_decision"):
                     progress_callback.on_path_decision(router, decision, state)
 
-            run_config["configurable"]["path_emitter"] = path_emitter
+            configurable["path_emitter"] = path_emitter
+
+        run_config: dict[str, Any] = {
+            "configurable": configurable,
+            # Increase recursion limit from default 25 to handle complex workflows
+            "recursion_limit": 100,
+        }
 
         if config:
             run_config.update(config)
@@ -766,7 +774,7 @@ class WorkflowRunner:
     async def _run_with_callbacks(
         self,
         graph: Any,
-        initial_state: WorkflowState,
+        initial_state: WorkflowState | None,
         run_config: dict,
         callback: "ProgressCallback",
     ) -> dict[str, Any]:
@@ -897,22 +905,24 @@ class WorkflowRunner:
                 "async with WorkflowRunner(project_dir) as runner: await runner.resume()"
             )
 
-        run_config = {
-            "configurable": {
-                "thread_id": self.thread_id,
-            },
-            # Increase recursion limit from default 25 to handle complex workflows
-            "recursion_limit": 100,
+        resume_configurable: dict[str, Any] = {
+            "thread_id": self.thread_id,
         }
         if progress_callback:
             # Store callback in configurable for task nodes to emit events
-            run_config["configurable"]["progress_callback"] = progress_callback
+            resume_configurable["progress_callback"] = progress_callback
 
-            def path_emitter(router, decision, state):
+            def path_emitter(router: Any, decision: Any, state: Any) -> None:
                 if hasattr(progress_callback, "on_path_decision"):
                     progress_callback.on_path_decision(router, decision, state)
 
-            run_config["configurable"]["path_emitter"] = path_emitter
+            resume_configurable["path_emitter"] = path_emitter
+
+        run_config: dict[str, Any] = {
+            "configurable": resume_configurable,
+            # Increase recursion limit from default 25 to handle complex workflows
+            "recursion_limit": 100,
+        }
 
         if config:
             run_config.update(config)
@@ -1083,7 +1093,7 @@ class WorkflowRunner:
 
         return result or {}
 
-    async def get_state(self) -> Optional[WorkflowState]:
+    async def get_state(self) -> Any:
         """Get the current workflow state.
 
         Must be called within async context manager.

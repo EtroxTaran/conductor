@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any, Generic, Optional, TypeVar
 
-from ...security import SecurityValidationError, validate_sql_field
+from ...security import SecurityValidationError, validate_sql_field, validate_sql_table
 from ..connection import Connection, get_connection
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,15 @@ class BaseRepository(Generic[T]):
 
         Args:
             project_name: Project name for database selection
+
+        Raises:
+            SecurityValidationError: If table_name is not in the allowlist.
         """
         self.project_name = project_name
+        if self.table_name:
+            self._validated_table = validate_sql_table(self.table_name)
+        else:
+            self._validated_table = ""
 
     async def _get_connection(self) -> Connection:
         """Get database connection."""
@@ -71,7 +78,7 @@ class BaseRepository(Generic[T]):
             Record if found, None otherwise
         """
         async with get_connection(self.project_name) as conn:
-            results = await conn.select(f"{self.table_name}:{record_id}")
+            results = await conn.select(f"{self._validated_table}:{record_id}")
             if results:
                 return self._to_record(results[0])
             return None
@@ -106,7 +113,7 @@ class BaseRepository(Generic[T]):
         async with get_connection(self.project_name) as conn:
             results = await conn.query(
                 f"""
-                SELECT * FROM {self.table_name}
+                SELECT * FROM {self._validated_table}
                 ORDER BY {validated_order_by} {direction}
                 LIMIT $limit START $offset
                 """,
@@ -126,7 +133,7 @@ class BaseRepository(Generic[T]):
         async with get_connection(self.project_name) as conn:
             results = await conn.query(
                 f"""
-                SELECT count() as total FROM {self.table_name}
+                SELECT count() as total FROM {self._validated_table}
                 GROUP ALL
                 """,
             )
@@ -149,7 +156,7 @@ class BaseRepository(Generic[T]):
         data["created_at"] = datetime.now().isoformat()
 
         async with get_connection(self.project_name) as conn:
-            result = await conn.create(self.table_name, data, record_id)
+            result = await conn.create(self._validated_table, data, record_id)
             return self._to_record(result)
 
     async def update(self, record_id: str, data: dict[str, Any]) -> Optional[T]:
@@ -165,7 +172,7 @@ class BaseRepository(Generic[T]):
         data["updated_at"] = datetime.now().isoformat()
 
         async with get_connection(self.project_name) as conn:
-            result = await conn.update(f"{self.table_name}:{record_id}", data)
+            result = await conn.update(f"{self._validated_table}:{record_id}", data)
             if result:
                 return self._to_record(result)
             return None
@@ -180,7 +187,7 @@ class BaseRepository(Generic[T]):
             True if deleted
         """
         async with get_connection(self.project_name) as conn:
-            result = await conn.delete(f"{self.table_name}:{record_id}")
+            result = await conn.delete(f"{self._validated_table}:{record_id}")
             return bool(result)
 
     async def delete_all(self) -> int:
@@ -194,7 +201,7 @@ class BaseRepository(Generic[T]):
         async with get_connection(self.project_name) as conn:
             results = await conn.query(
                 f"""
-                DELETE FROM {self.table_name}
+                DELETE FROM {self._validated_table}
                 RETURN BEFORE
                 """,
             )

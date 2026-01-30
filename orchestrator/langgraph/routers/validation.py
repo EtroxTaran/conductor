@@ -3,12 +3,14 @@
 Routes after the validation fan-in node based on approval results.
 """
 
-
+import logging
 from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
 
 from ..state import WorkflowDecision, WorkflowState
+
+logger = logging.getLogger(__name__)
 
 
 def validation_router(
@@ -32,14 +34,16 @@ def validation_router(
         if emitter and callable(emitter):
             try:
                 emitter(router="validation_router", decision=decision, state=state)
-            except Exception:
+            except Exception as e:
                 # Don't fail workflow if emission fails
-                pass
+                logger.warning(f"Failed to emit path decision event: {e}")
 
     return decision
 
 
-def _get_decision(state: WorkflowState) -> str:
+def _get_decision(
+    state: WorkflowState,
+) -> Literal["implementation", "planning", "human_escalation", "__end__"]:
     """Determine the next step."""
     decision = state.get("next_decision")
 

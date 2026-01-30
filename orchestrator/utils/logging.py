@@ -1,13 +1,16 @@
 """Logging utilities for the orchestration workflow."""
 
 import json
+import logging as _logging
 import re
 import sys
 import threading
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+_logger = _logging.getLogger(__name__)
 
 
 class LogLevel(str, Enum):
@@ -178,10 +181,10 @@ class OrchestrationLogger:
                 self._log_handle.close()
             if hasattr(self, "_json_handle") and self._json_handle:
                 self._json_handle.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
+        except Exception as e:
+            _logger.debug(f"Log handle cleanup failed: {e}")
 
-    def _rotate_file(self, file_path: Path, file_handle) -> any:
+    def _rotate_file(self, file_path: Path, file_handle: Any) -> Any:
         """Rotate a log file if it exceeds max size.
 
         Args:
@@ -221,11 +224,13 @@ class OrchestrationLogger:
             # Open new file
             return open(file_path, "a", encoding="utf-8", buffering=1)
 
-        except Exception:
+        except Exception as e:
+            _logger.debug(f"Log rotation failed for {file_path}: {e}")
             # If rotation fails, try to reopen the file
             try:
                 return open(file_path, "a", encoding="utf-8", buffering=1)
-            except Exception:
+            except Exception as reopen_err:
+                _logger.debug(f"Log file reopen failed for {file_path}: {reopen_err}")
                 return file_handle
 
     def _check_rotation(self) -> None:
@@ -337,9 +342,9 @@ class OrchestrationLogger:
         phase: Optional[int] = None,
         agent: Optional[str] = None,
         extra: Optional[dict] = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Format message as JSON."""
-        entry = {
+        entry: dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),
             "level": level.value,
             "message": message,
@@ -433,12 +438,12 @@ class OrchestrationLogger:
         }
         return mapping.get(level, "info")
 
-    def _redact_dict(self, data: dict) -> dict:
+    def _redact_dict(self, data: dict[str, Any]) -> dict[str, Any]:
         """Recursively redact secrets from a dictionary."""
         if not self._redactor:
             return data
 
-        result = {}
+        result: dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, str):
                 result[key] = self._redactor.redact(value)

@@ -34,6 +34,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+from .safe_env import git_env
+
+# Timeout constants (seconds) for subprocess.run calls, grouped by operation weight.
+GIT_TIMEOUT_FAST = 30  # rev-parse, status, diff, prune, porcelain
+GIT_TIMEOUT_WRITE = 60  # commit, cherry-pick, add, checkout
+GIT_TIMEOUT_HEAVY = 120  # worktree add, worktree remove
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,9 +139,10 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=GIT_TIMEOUT_FAST,
             )
             return result.returncode == 0
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
     def _get_current_commit(self) -> str:
@@ -145,10 +153,11 @@ class WorktreeManager:
             capture_output=True,
             text=True,
             check=True,
+            timeout=GIT_TIMEOUT_FAST,
         )
         return result.stdout.strip()
 
-    def create_worktree(self, suffix: str = None) -> Path:
+    def create_worktree(self, suffix: str | None = None) -> Path:
         """Create a new worktree for a worker.
 
         Creates a worktree at a sibling directory to the project, based on
@@ -180,12 +189,13 @@ class WorktreeManager:
 
             try:
                 # Create worktree at HEAD
-                result = subprocess.run(
+                subprocess.run(
                     ["git", "worktree", "add", str(worktree_path), "HEAD"],
                     cwd=str(self.project_dir),
                     capture_output=True,
                     text=True,
                     check=True,
+                    timeout=GIT_TIMEOUT_HEAVY,
                 )
                 worktree_created = True
 
@@ -214,9 +224,13 @@ class WorktreeManager:
                             cwd=str(self.project_dir),
                             capture_output=True,
                             check=False,  # Don't raise if cleanup fails
+                            timeout=GIT_TIMEOUT_HEAVY,
                         )
-                    except Exception:
-                        pass  # Best-effort cleanup
+                    except Exception as cleanup_err:
+                        logger.debug(
+                            f"Best-effort worktree cleanup failed for {worktree_path}: "
+                            f"{cleanup_err}"
+                        )
                 raise WorktreeError(f"Failed to setup worktree: {e}") from e
 
     def remove_worktree(self, worktree_path: Path, force: bool = False) -> bool:
@@ -242,6 +256,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_HEAVY,
             )
 
             # Remove from tracked list (thread-safe)
@@ -279,6 +294,7 @@ class WorktreeManager:
                 cwd=str(self.project_dir),
                 capture_output=True,
                 check=False,
+                timeout=GIT_TIMEOUT_FAST,
             )
         except Exception as e:
             logger.warning(f"Failed to prune worktrees: {e}")
@@ -322,6 +338,7 @@ class WorktreeManager:
                 cwd=str(worktree_path),
                 check=True,
                 capture_output=True,
+                timeout=GIT_TIMEOUT_WRITE,
             )
 
             # Check if there are changes to commit
@@ -331,6 +348,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
 
             if not status_result.stdout.strip() and not allow_empty:
@@ -347,6 +365,7 @@ class WorktreeManager:
                 cwd=str(worktree_path),
                 capture_output=True,
                 check=True,
+                timeout=GIT_TIMEOUT_WRITE,
             )
 
             # Get the commit hash
@@ -356,6 +375,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
             commit_hash = result.stdout.strip()
 
@@ -366,6 +386,7 @@ class WorktreeManager:
                 cwd=str(self.project_dir),
                 capture_output=True,
                 text=True,
+                timeout=GIT_TIMEOUT_WRITE,
             )
 
             if cherry_pick_result.returncode != 0:
@@ -376,6 +397,7 @@ class WorktreeManager:
                         ["git", "cherry-pick", "--abort"],
                         cwd=str(self.project_dir),
                         capture_output=True,
+                        timeout=GIT_TIMEOUT_FAST,
                     )
                     logger.info(f"Worktree {worktree_path.name} had no unique changes to merge")
                     return commit_hash  # Still return the commit hash
@@ -412,6 +434,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
             files = result.stdout.strip().split("\n") if result.stdout.strip() else []
             return [f for f in files if f]
@@ -447,6 +470,7 @@ class WorktreeManager:
                 ["git", "cherry-pick", "--abort"],
                 cwd=str(self.project_dir),
                 capture_output=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
             raise MergeConflictError(
                 message=f"Merge conflict occurred for worktree {worktree_path.name}",
@@ -463,11 +487,13 @@ class WorktreeManager:
                     ["git", "checkout", "--ours", file_path],
                     cwd=str(self.project_dir),
                     capture_output=True,
+                    timeout=GIT_TIMEOUT_WRITE,
                 )
                 subprocess.run(
                     ["git", "add", file_path],
                     cwd=str(self.project_dir),
                     capture_output=True,
+                    timeout=GIT_TIMEOUT_WRITE,
                 )
 
             # Continue cherry-pick
@@ -475,7 +501,8 @@ class WorktreeManager:
                 ["git", "cherry-pick", "--continue"],
                 cwd=str(self.project_dir),
                 capture_output=True,
-                env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+                env=git_env({"GIT_EDITOR": "true"}),
+                timeout=GIT_TIMEOUT_WRITE,
             )
             logger.info(f"Resolved conflict with OURS strategy for {worktree_path.name}")
             return commit_hash
@@ -488,11 +515,13 @@ class WorktreeManager:
                     ["git", "checkout", "--theirs", file_path],
                     cwd=str(self.project_dir),
                     capture_output=True,
+                    timeout=GIT_TIMEOUT_WRITE,
                 )
                 subprocess.run(
                     ["git", "add", file_path],
                     cwd=str(self.project_dir),
                     capture_output=True,
+                    timeout=GIT_TIMEOUT_WRITE,
                 )
 
             # Continue cherry-pick
@@ -500,7 +529,8 @@ class WorktreeManager:
                 ["git", "cherry-pick", "--continue"],
                 cwd=str(self.project_dir),
                 capture_output=True,
-                env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+                env=git_env({"GIT_EDITOR": "true"}),
+                timeout=GIT_TIMEOUT_WRITE,
             )
             logger.info(f"Resolved conflict with THEIRS strategy for {worktree_path.name}")
             return commit_hash
@@ -511,6 +541,7 @@ class WorktreeManager:
                 ["git", "cherry-pick", "--abort"],
                 cwd=str(self.project_dir),
                 capture_output=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
             raise MergeConflictError(
                 message=f"Merge conflict queued for manual resolution: {worktree_path.name}",
@@ -595,6 +626,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
 
             # Get current commit
@@ -604,6 +636,7 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
 
             lines = status_result.stdout.strip().split("\n") if status_result.stdout.strip() else []
@@ -635,10 +668,11 @@ class WorktreeManager:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=GIT_TIMEOUT_FAST,
             )
 
-            worktrees = []
-            current = {}
+            worktrees: list[dict[str, str | bool]] = []
+            current: dict[str, str | bool] = {}
 
             for line in result.stdout.strip().split("\n"):
                 if not line:
@@ -711,6 +745,7 @@ class WorktreeManager:
                             cwd=str(self.project_dir),
                             capture_output=True,
                             check=True,
+                            timeout=GIT_TIMEOUT_HEAVY,
                         )
                         removed_count += 1
                     except subprocess.CalledProcessError as e:
@@ -731,9 +766,10 @@ class WorktreeManager:
                 cwd=str(self.project_dir),
                 capture_output=True,
                 check=False,
+                timeout=GIT_TIMEOUT_FAST,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to prune stale worktree references: {e}")
 
         return removed_count
 
