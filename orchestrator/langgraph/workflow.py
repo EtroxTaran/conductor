@@ -899,7 +899,8 @@ class WorkflowRunner:
         # Retrieve the full accumulated state from the graph checkpoint,
         # not just the last node's partial output.
         try:
-            final_snapshot = await graph.aget_state(run_config)
+            state_config = {"configurable": run_config.get("configurable", {})}
+            final_snapshot = await graph.aget_state(state_config)
             if final_snapshot and final_snapshot.values:
                 return dict(final_snapshot.values)
         except Exception as e:

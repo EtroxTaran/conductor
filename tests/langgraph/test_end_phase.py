@@ -210,7 +210,11 @@ class TestCheckWorkflowSuccessEndPhase:
                 end_phase = result.get("end_phase", 5)
                 phase_status = result.get("phase_status", {})
 
-                # Check if the completion node ran (always marks phase 5)
+                # Primary: completion node sets current_phase=5, next_decision="continue"
+                if result.get("current_phase") == 5 and result.get("next_decision") == "continue":
+                    return True
+
+                # Secondary: phase_status shows completion node ran (marks phase 5)
                 phase_5 = phase_status.get("5")
                 if phase_5 and hasattr(phase_5, "status"):
                     status_val = (
@@ -228,7 +232,8 @@ class TestCheckWorkflowSuccessEndPhase:
                             if hasattr(target.status, "value")
                             else target.status
                         )
-                        return bool(status_val == "completed")
+                        if status_val == "completed":
+                            return True
 
                 return False
 
@@ -279,3 +284,30 @@ class TestCheckWorkflowSuccessEndPhase:
             },
         }
         assert orch._check_workflow_success(result) is True
+
+    def test_success_via_current_phase_and_next_decision(self):
+        """Primary check: current_phase=5 + next_decision=continue = success."""
+        orch = self._make_orchestrator()
+        result = {
+            "end_phase": 2,
+            "current_phase": 5,
+            "next_decision": "continue",
+            "phase_status": {
+                "2": PhaseState(status=PhaseStatus.PENDING),
+                "5": PhaseState(status=PhaseStatus.PENDING),
+            },
+        }
+        assert orch._check_workflow_success(result) is True
+
+    def test_failure_current_phase_5_but_escalate(self):
+        """current_phase=5 but next_decision=escalate = failure."""
+        orch = self._make_orchestrator()
+        result = {
+            "end_phase": 5,
+            "current_phase": 5,
+            "next_decision": "escalate",
+            "phase_status": {
+                "5": PhaseState(status=PhaseStatus.PENDING),
+            },
+        }
+        assert orch._check_workflow_success(result) is False

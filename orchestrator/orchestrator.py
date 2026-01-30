@@ -611,7 +611,11 @@ class Orchestrator:
         end_phase = result.get("end_phase", 5)
         phase_status = result.get("phase_status", {})
 
-        # Check if the completion node ran (always marks phase 5)
+        # Primary check: completion node sets current_phase=5 and next_decision="continue"
+        if result.get("current_phase") == 5 and result.get("next_decision") == "continue":
+            return True
+
+        # Secondary check: phase_status shows completion node ran (marks phase 5)
         phase_5 = phase_status.get("5")
         if phase_5 and hasattr(phase_5, "status"):
             status_val = (
@@ -627,7 +631,8 @@ class Orchestrator:
                 status_val = (
                     target.status.value if hasattr(target.status, "value") else target.status
                 )
-                return status_val == "completed"
+                if status_val == "completed":
+                    return True
 
         return False
 
