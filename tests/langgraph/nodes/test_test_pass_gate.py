@@ -369,6 +369,22 @@ class TestGetTestCommand:
 class TestRunTests:
     """Tests for the _run_tests function."""
 
+    def test_subprocess_called_with_list_and_shell_false_regression(self):
+        """Regression: _run_tests must use shlex.split + shell=False to prevent command injection."""
+        with patch("orchestrator.langgraph.nodes.test_pass_gate.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="10 passed", stderr="")
+
+            _run_tests(Path("/tmp/test"), "npm run test")
+
+            call_args = mock_run.call_args
+            # First positional arg must be a list, not a string
+            assert isinstance(
+                call_args[0][0], list
+            ), "subprocess.run must receive a list, not a string"
+            assert call_args[0][0] == ["npm", "run", "test"]
+            # shell must be False
+            assert call_args[1].get("shell") is False, "shell must be False"
+
     def test_returns_passed_on_success(self):
         """Test that successful tests return passed status."""
         with patch("orchestrator.langgraph.nodes.test_pass_gate.subprocess.run") as mock_run:

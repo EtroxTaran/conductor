@@ -6,6 +6,7 @@ for fixes.
 """
 
 import logging
+import shlex
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -206,8 +207,8 @@ def _run_tests(project_dir: Path, test_command: str) -> dict[str, Any]:
     try:
         # Run tests with timeout (5 minutes for large test suites)
         result = subprocess.run(
-            test_command,
-            shell=True,
+            shlex.split(test_command),
+            shell=False,
             cwd=project_dir,
             capture_output=True,
             text=True,

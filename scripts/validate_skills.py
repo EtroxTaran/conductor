@@ -64,7 +64,7 @@ def validate_skill(path: Path) -> list[str]:
         errors.append(f"Frontmatter name '{name}' does not match directory '{path.parent.name}'.")
 
     version = frontmatter.get("version", "")
-    if version and not re.match(r"^[0-9]+\\.[0-9]+\\.[0-9]+$", version):
+    if version and not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
         errors.append("Version must be semantic (x.y.z).")
 
     status = frontmatter.get("status", "")

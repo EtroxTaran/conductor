@@ -6,6 +6,7 @@ dependencies to prevent runtime errors.
 """
 
 import logging
+import shlex
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -151,8 +152,8 @@ def _install_dependencies(project_dir: Path, project_type: str) -> Optional[dict
 
     try:
         result = subprocess.run(
-            install_command,
-            shell=True,
+            shlex.split(install_command),
+            shell=False,
             cwd=project_dir,
             capture_output=True,
             text=True,

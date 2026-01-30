@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any, Generic, Optional, TypeVar
 
+from ...security import SecurityValidationError, validate_sql_field
 from ..connection import Connection, get_connection
 
 logger = logging.getLogger(__name__)
@@ -95,12 +96,18 @@ class BaseRepository(Generic[T]):
         Returns:
             List of records
         """
+        try:
+            validated_order_by = validate_sql_field(order_by)
+        except SecurityValidationError:
+            validated_order_by = "created_at"
+            logger.warning(f"Invalid order_by field '{order_by}', using 'created_at'")
+
         direction = "DESC" if descending else "ASC"
         async with get_connection(self.project_name) as conn:
             results = await conn.query(
                 f"""
                 SELECT * FROM {self.table_name}
-                ORDER BY {order_by} {direction}
+                ORDER BY {validated_order_by} {direction}
                 LIMIT $limit START $offset
                 """,
                 {
@@ -124,7 +131,7 @@ class BaseRepository(Generic[T]):
                 """,
             )
             if results:
-                return results[0].get("total", 0)
+                return int(results[0].get("total", 0))
             return 0
 
     async def create(self, data: dict[str, Any], record_id: Optional[str] = None) -> T:
@@ -173,7 +180,8 @@ class BaseRepository(Generic[T]):
             True if deleted
         """
         async with get_connection(self.project_name) as conn:
-            return await conn.delete(f"{self.table_name}:{record_id}")
+            result = await conn.delete(f"{self.table_name}:{record_id}")
+            return bool(result)
 
     async def delete_all(self) -> int:
         """Delete all records in this table.
