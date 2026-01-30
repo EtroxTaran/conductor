@@ -1607,7 +1607,14 @@ Examples:
             result = orchestrator.resume()
     elif args.start or args.phase:
         if use_langgraph:
-            result = asyncio.run(orchestrator.run_langgraph(autonomous=args.autonomous))
+            result = asyncio.run(
+                orchestrator.run_langgraph(
+                    autonomous=args.autonomous,
+                    start_phase=args.phase or 1,
+                    end_phase=args.end_phase,
+                    skip_validation=args.skip_validation,
+                )
+            )
         else:
             start = args.phase or 1
             result = orchestrator.run(
