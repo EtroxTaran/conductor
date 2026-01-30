@@ -167,6 +167,7 @@ class ClaudeAgent(BaseAgent):
         output_schema: Optional[str] = None,
         budget_usd: Optional[float] = None,
         fallback_model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         **kwargs,
     ) -> list[str]:
         """Build the Claude CLI command with enhanced features.
@@ -183,6 +184,7 @@ class ClaudeAgent(BaseAgent):
             output_schema: Path to JSON schema file (relative to schema_dir)
             budget_usd: Maximum budget for this invocation
             fallback_model: Fallback model (sonnet, haiku)
+            system_prompt: Override system prompt (appended via --system-prompt)
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -231,6 +233,10 @@ class ClaudeAgent(BaseAgent):
         if effective_fallback:
             command.extend(["--fallback-model", effective_fallback])
 
+        # Add system prompt override if specified (worker role override)
+        if system_prompt:
+            command.extend(["--system-prompt", system_prompt])
+
         # Add system prompt file if specified
         if self.system_prompt_file:
             system_path = self.project_dir / self.system_prompt_file
@@ -263,6 +269,7 @@ class ClaudeAgent(BaseAgent):
         use_plan_mode: Optional[bool] = None,
         output_schema: Optional[str] = None,
         budget_usd: Optional[float] = None,
+        system_prompt: Optional[str] = None,
         **kwargs,
     ) -> AgentResult:
         """Execute the agent with enhanced features.
@@ -297,6 +304,7 @@ class ClaudeAgent(BaseAgent):
             use_plan_mode=use_plan_mode or False,
             output_schema=output_schema,
             budget_usd=budget_usd,
+            system_prompt=system_prompt,
             **kwargs,
         )
 

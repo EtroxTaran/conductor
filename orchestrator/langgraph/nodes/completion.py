@@ -31,7 +31,12 @@ async def completion_node(state: WorkflowState) -> dict[str, Any]:
     Returns:
         State updates with completion status
     """
-    logger.info(f"Completing workflow for: {state['project_name']}")
+    end_phase = state.get("end_phase", 5)
+    is_early_stop = end_phase < 5
+    logger.info(
+        f"Completing workflow for: {state['project_name']}"
+        + (f" (early stop at phase {end_phase})" if is_early_stop else "")
+    )
 
     project_dir = Path(state["project_dir"])
 
@@ -57,14 +62,28 @@ async def completion_node(state: WorkflowState) -> dict[str, Any]:
         "",
         f"**Project:** {state['project_name']}",
         f"**Completed:** {datetime.now().isoformat()}",
-        "",
-        "## Plan Summary",
-        "",
-        f"**Name:** {plan.get('plan_name', 'Unknown')}",
-        "",
-        f"{plan.get('summary', 'No summary available.')}",
-        "",
     ]
+
+    if is_early_stop:
+        summary_lines.extend(
+            [
+                f"**Early Stop:** Workflow stopped at phase {end_phase} (--end-phase {end_phase})",
+                f"**Phases Executed:** 0-{end_phase}",
+                "",
+            ]
+        )
+
+    summary_lines.extend(
+        [
+            "",
+            "## Plan Summary",
+            "",
+            f"**Name:** {plan.get('plan_name', 'Unknown')}",
+            "",
+            f"{plan.get('summary', 'No summary available.')}",
+            "",
+        ]
+    )
 
     # Implementation results
     if impl_result:
@@ -205,6 +224,8 @@ async def completion_node(state: WorkflowState) -> dict[str, Any]:
         "total_errors": len(errors),
         "total_commits": len(git_commits),
         "markdown_summary": "\n".join(summary_lines),
+        "early_stop": is_early_stop,
+        "end_phase": end_phase,
     }
 
     # Save completion summary to database
@@ -222,17 +243,18 @@ async def completion_node(state: WorkflowState) -> dict[str, Any]:
 
     logger.info("Completion summary saved to database")
 
-    # Run scheduled cleanup to remove old persistent artifacts
-    try:
-        cleanup_manager = CleanupManager(project_dir)
-        cleanup_result = cleanup_manager.scheduled_cleanup()
-        if cleanup_result.total_deleted > 0:
-            logger.info(
-                f"Scheduled cleanup: {cleanup_result.total_deleted} items, "
-                f"{cleanup_result.bytes_freed} bytes freed"
-            )
-    except Exception as e:
-        logger.warning(f"Scheduled cleanup failed: {e}")
+    # Run scheduled cleanup to remove old persistent artifacts (skip for early stops)
+    if not is_early_stop:
+        try:
+            cleanup_manager = CleanupManager(project_dir)
+            cleanup_result = cleanup_manager.scheduled_cleanup()
+            if cleanup_result.total_deleted > 0:
+                logger.info(
+                    f"Scheduled cleanup: {cleanup_result.total_deleted} items, "
+                    f"{cleanup_result.bytes_freed} bytes freed"
+                )
+        except Exception as e:
+            logger.warning(f"Scheduled cleanup failed: {e}")
 
     return {
         "phase_status": phase_status,

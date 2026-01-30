@@ -597,20 +597,38 @@ class Orchestrator:
     def _check_workflow_success(self, result: dict) -> bool:
         """Check if workflow completed successfully.
 
+        Checks the target phase (end_phase) instead of hardcoded phase 5.
+        For early stops (end_phase < 5), considers the workflow successful
+        if the completion node ran (phase 5 marked completed) OR if the
+        last executed phase completed successfully.
+
         Args:
             result: Workflow result dictionary
 
         Returns:
-            True if phase 5 is completed
+            True if target phase is completed
         """
+        end_phase = result.get("end_phase", 5)
         phase_status = result.get("phase_status", {})
+
+        # Check if the completion node ran (always marks phase 5)
         phase_5 = phase_status.get("5")
         if phase_5 and hasattr(phase_5, "status"):
-            return (
-                phase_5.status.value == "completed"
-                if hasattr(phase_5.status, "value")
-                else phase_5.status == "completed"
+            status_val = (
+                phase_5.status.value if hasattr(phase_5.status, "value") else phase_5.status
             )
+            if status_val == "completed":
+                return True
+
+        # For early stops, check if the target phase completed
+        if end_phase < 5:
+            target = phase_status.get(str(end_phase))
+            if target and hasattr(target, "status"):
+                status_val = (
+                    target.status.value if hasattr(target.status, "value") else target.status
+                )
+                return status_val == "completed"
+
         return False
 
     def _extract_interrupt_data(self, pending: dict) -> Optional[dict]:

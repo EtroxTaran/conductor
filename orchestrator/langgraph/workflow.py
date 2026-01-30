@@ -133,14 +133,26 @@ def planning_send_router(state: WorkflowState) -> list[Send]:
     only if planning succeeded. This prevents validation from running when
     planning failed.
 
+    Also checks end_phase: if end_phase=1, routes to completion instead of
+    validation (skip phases 2+).
+
     Args:
         state: Current workflow state
 
     Returns:
         List of Send objects:
+        - [Send(completion)] if end_phase=1
         - [Send(cursor_validate), Send(gemini_validate)] if plan exists
         - [Send(error_dispatch)] if planning failed
     """
+    # Check end_phase: if end_phase=1, skip validation and route to completion
+    end_phase = state.get("end_phase", 5)
+    if end_phase <= 1:
+        plan = state.get("plan")
+        if plan and plan.get("plan_name"):
+            logger.info(f"end_phase={end_phase} reached after planning - routing to completion")
+            return [Send("completion", state)]
+
     # Check if plan exists and is valid
     plan = state.get("plan")
     has_valid_plan = plan and plan.get("plan_name")
@@ -380,11 +392,13 @@ def create_workflow_graph(
     )
 
     # Approval gate → pre_implementation (with conditional routing)
+    # end_phase check: routes to completion if end_phase <= 2
     graph.add_conditional_edges(
         "approval_gate",
         approval_gate_router,
         {
             "pre_implementation": "pre_implementation",
+            "completion": "completion",  # end_phase early stop
             "planning": "planning",
             "human_escalation": "error_dispatch",  # Route through error_dispatch
             "__end__": END,
@@ -392,12 +406,13 @@ def create_workflow_graph(
     )
 
     # Pre-implementation → task_subgraph (with conditional routing)
-    # Replaces routing to task_breakdown
+    # end_phase check: routes to completion if end_phase <= 2
     graph.add_conditional_edges(
         "pre_implementation",
         pre_implementation_router,
         {
             "implementation": "task_subgraph",  # Use subgraph
+            "completion": "completion",  # end_phase early stop
             "human_escalation": "error_dispatch",  # Route through error_dispatch
             "__end__": END,
         },
@@ -680,14 +695,16 @@ class WorkflowRunner:
                 "async with WorkflowRunner(project_dir) as runner: await runner.run()"
             )
 
-        # Extract execution_mode from config if provided
+        # Extract execution_mode and end_phase from config if provided
         execution_mode = config.get("execution_mode", "hitl") if config else "hitl"
+        end_phase = config.get("end_phase", 5) if config else 5
 
         if initial_state is None:
             initial_state = create_initial_state(
                 project_dir=str(self.project_dir),
                 project_name=self.project_name,
                 execution_mode=execution_mode,
+                end_phase=end_phase,
             )
             # Apply config overrides for task loop limits
             if self.project_config and self.project_config.retry:

@@ -1137,11 +1137,15 @@ class WorkflowState(TypedDict, total=False):
     test_gate_attempts: int  # Track retry count
     test_gate_results: Optional[dict]  # Latest test run results
 
+    # End phase control (--end-phase CLI flag)
+    end_phase: int  # Phase to stop at (1-5, default 5)
+
 
 def create_initial_state(
     project_dir: str,
     project_name: str,
     execution_mode: str = "hitl",
+    end_phase: int = 5,
 ) -> WorkflowState:
     """Create initial workflow state.
 
@@ -1149,6 +1153,7 @@ def create_initial_state(
         project_dir: Project directory path
         project_name: Project name
         execution_mode: Execution mode - "hitl" (human-in-the-loop, default) or "afk" (autonomous)
+        end_phase: Phase to stop at (1-5, default 5)
 
     Returns:
         Initial WorkflowState
@@ -1238,6 +1243,8 @@ def create_initial_state(
         # Test pass gate (final verification before completion)
         test_gate_attempts=0,
         test_gate_results=None,
+        # End phase control (--end-phase CLI flag)
+        end_phase=max(1, min(end_phase, 5)),  # Clamp to 1-5
     )
 
 

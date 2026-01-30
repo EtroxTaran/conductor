@@ -8,6 +8,20 @@ from typing import Literal
 from ..state import PhaseStatus, WorkflowDecision, WorkflowState
 
 
+def _reached_end_phase(state: WorkflowState, current_phase: int) -> bool:
+    """Check if we've reached the configured end phase.
+
+    Args:
+        state: Current workflow state
+        current_phase: The phase that just completed
+
+    Returns:
+        True if current_phase >= end_phase (should stop)
+    """
+    end_phase = state.get("end_phase", 5)
+    return current_phase >= end_phase
+
+
 def prerequisites_router(
     state: WorkflowState,
 ) -> Literal["planning", "human_escalation", "__end__"]:
@@ -285,10 +299,32 @@ def documentation_discovery_router(
     return "planning"
 
 
+def product_validation_end_phase_router(
+    state: WorkflowState,
+) -> Literal["planning", "completion", "human_escalation", "__end__"]:
+    """Route after product validation, with end_phase support.
+
+    Wraps documentation_discovery_router to check end_phase before
+    routing to planning. If end_phase=0 is ever supported, this
+    would route to completion. Currently phase 0 has no numbered
+    end_phase gate, so this delegates to documentation_discovery_router.
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        Next node name
+    """
+    return documentation_discovery_router(state)
+
+
 def pre_implementation_router(
     state: WorkflowState,
-) -> Literal["implementation", "human_escalation", "__end__"]:
+) -> Literal["implementation", "completion", "human_escalation", "__end__"]:
     """Route after pre-implementation checks.
+
+    Checks end_phase before routing to implementation. If end_phase <= 2,
+    routes to completion instead of implementation (skips phase 3+).
 
     Args:
         state: Current workflow state
@@ -296,9 +332,14 @@ def pre_implementation_router(
     Returns:
         Next node name:
         - "implementation": Checks passed, proceed to implementation
+        - "completion": end_phase reached, skip implementation
         - "human_escalation": Checks failed, need human help
         - "__end__": Abort workflow
     """
+    # Check if we should stop before implementation (phases 3+)
+    if _reached_end_phase(state, 2):
+        return "completion"
+
     decision = state.get("next_decision")
 
     if decision == WorkflowDecision.CONTINUE or decision == "continue":
@@ -415,8 +456,11 @@ def security_scan_router(
 
 def approval_gate_router(
     state: WorkflowState,
-) -> Literal["pre_implementation", "planning", "human_escalation", "__end__"]:
+) -> Literal["pre_implementation", "completion", "planning", "human_escalation", "__end__"]:
     """Route after approval gate (post-validation).
+
+    Checks end_phase before routing to pre-implementation. If end_phase <= 2,
+    routes to completion instead.
 
     Args:
         state: Current workflow state
@@ -424,6 +468,10 @@ def approval_gate_router(
     Returns:
         Next node name based on approval decision
     """
+    # Check if we should stop before implementation (phases 3+)
+    if _reached_end_phase(state, 2):
+        return "completion"
+
     decision = state.get("next_decision")
 
     if decision == WorkflowDecision.CONTINUE or decision == "continue":

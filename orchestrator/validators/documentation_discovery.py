@@ -11,6 +11,7 @@ Design:
 - Only escalates to human if docs/ folder is missing
 """
 
+import fnmatch
 import logging
 import re
 from dataclasses import dataclass, field
@@ -154,21 +155,41 @@ class DocumentationScanner:
     # File extensions to consider
     SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".rst"]
 
+    # Directories to exclude from discovery by default
+    DEFAULT_EXCLUDE_PATTERNS = [
+        "legacy_archive*",
+        "archive",
+        "archived",
+        "deprecated",
+        "old",
+        ".git",
+        "node_modules",
+        "__pycache__",
+    ]
+
     def __init__(
         self,
         custom_paths: Optional[list[str]] = None,
         max_depth: int = MAX_DEPTH,
+        exclude_patterns: Optional[list[str]] = None,
     ):
         """Initialize the scanner.
 
         Args:
             custom_paths: Custom paths to search (in addition to defaults)
             max_depth: Maximum directory depth to search
+            exclude_patterns: Directory name patterns to exclude (fnmatch syntax).
+                              Defaults to DEFAULT_EXCLUDE_PATTERNS if not specified.
         """
         self.discovery_paths = list(self.DISCOVERY_PATHS)
         if custom_paths:
             self.discovery_paths = custom_paths + self.discovery_paths
         self.max_depth = max_depth
+        self.exclude_patterns = (
+            exclude_patterns
+            if exclude_patterns is not None
+            else list(self.DEFAULT_EXCLUDE_PATTERNS)
+        )
 
     def discover(self, project_dir: Path) -> DiscoveredDocumentation:
         """Discover all documentation in the project.
@@ -249,6 +270,10 @@ class DocumentationScanner:
                     continue
 
                 if item.is_dir():
+                    # Check exclusion patterns
+                    if any(fnmatch.fnmatch(item.name, pat) for pat in self.exclude_patterns):
+                        logger.debug(f"Excluding directory: {item.name}")
+                        continue
                     self._scan_folder(item, project_dir, result, depth + 1)
                 elif item.is_file() and item.suffix.lower() in self.SUPPORTED_EXTENSIONS:
                     doc = self._parse_document(item, project_dir)
@@ -532,15 +557,20 @@ class DocumentationScanner:
 def discover_documentation(
     project_dir: str | Path,
     custom_paths: Optional[list[str]] = None,
+    exclude_patterns: Optional[list[str]] = None,
 ) -> DiscoveredDocumentation:
     """Convenience function to discover documentation.
 
     Args:
         project_dir: Path to project directory
         custom_paths: Optional custom paths to search
+        exclude_patterns: Optional directory name patterns to exclude
 
     Returns:
         DiscoveredDocumentation
     """
-    scanner = DocumentationScanner(custom_paths=custom_paths)
+    scanner = DocumentationScanner(
+        custom_paths=custom_paths,
+        exclude_patterns=exclude_patterns,
+    )
     return scanner.discover(Path(project_dir))

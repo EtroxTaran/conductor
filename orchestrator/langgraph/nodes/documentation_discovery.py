@@ -45,8 +45,16 @@ async def documentation_discovery_node(state: WorkflowState) -> dict[str, Any]:
             "next_decision": "continue",
         }
 
+    # Extract documentation exclusion patterns from config
+    exclude_patterns = None
+    if config:
+        # Check for documentation.exclude_patterns in raw config
+        raw_config = _load_raw_doc_config(project_dir)
+        if raw_config:
+            exclude_patterns = raw_config.get("exclude_patterns")
+
     # Discover documentation
-    scanner = DocumentationScanner()
+    scanner = DocumentationScanner(exclude_patterns=exclude_patterns)
     result = scanner.discover(project_dir)
 
     # Save discovery results to database
@@ -123,3 +131,30 @@ async def documentation_discovery_node(state: WorkflowState) -> dict[str, Any]:
         "updated_at": datetime.now().isoformat(),
         "next_decision": "continue",
     }
+
+
+def _load_raw_doc_config(project_dir: Path) -> dict[str, Any] | None:
+    """Load documentation config from .project-config.json.
+
+    Reads the raw JSON to extract documentation.exclude_patterns
+    without requiring a formal config field.
+
+    Args:
+        project_dir: Project directory
+
+    Returns:
+        Documentation config dict or None
+    """
+    config_path = project_dir / ".project-config.json"
+    if not config_path.exists():
+        return None
+
+    try:
+        raw = json.loads(config_path.read_text())
+        doc_config = raw.get("documentation")
+        if isinstance(doc_config, dict):
+            return doc_config
+        return None
+    except Exception as e:
+        logger.debug(f"Could not read documentation config: {e}")
+        return None

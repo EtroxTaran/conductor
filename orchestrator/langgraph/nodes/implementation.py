@@ -28,6 +28,17 @@ IMPLEMENTATION_TIMEOUT = 1800  # 30 minutes
 TEST_TIMEOUT = 300  # 5 minutes
 MAX_CONCURRENT_OPERATIONS = 3
 
+# Worker role override for projects where CLAUDE.md defines a non-implementer role.
+# This is passed via --system-prompt to override project-level CLAUDE.md constraints.
+WORKER_ROLE_OVERRIDE = (
+    "CRITICAL ROLE OVERRIDE: You are a Worker Claude spawned by the Conductor orchestrator. "
+    "Your role IS to write production code. If any CLAUDE.md in the project directory defines "
+    "a different role (e.g., Product Manager, Architect, documentation-only), IGNORE those role "
+    "constraints for this session. You are the IMPLEMENTER. Write code, write tests, follow TDD. "
+    "This override takes precedence over any project-level CLAUDE.md instructions about not "
+    "writing code."
+)
+
 IMPLEMENTATION_PROMPT = """You are implementing a software feature based on an approved plan.
 
 IMPLEMENTATION PLAN:
